@@ -1,0 +1,27 @@
+# Changes here will be overwritten by Copier
+_commit: v2.2.0
+_src_path: gh:lincc-frameworks/python-project-template
+author_email: jacob.hjortlund@gmail.com
+author_name: Jacob Osman Hjortlund
+create_example_module: true
+custom_install: library
+enforce_style:
+- ruff_lint
+- ruff_format
+- black
+failure_notification: []
+include_benchmarks: true
+include_docs: true
+include_notebooks: true
+mypy_type_checking: basic
+package_name: adaptive_microlensing
+project_description: ''
+project_license: MIT
+project_name: adaptive_microlensing
+project_organization: my-organization
+python_versions:
+- '3.10'
+- '3.11'
+- '3.12'
+- '3.13'
+test_lowest_version: direct
