@@ -33,9 +33,11 @@ def test_query_many_matches_single_queries(tetra_bank):
 
 
 def test_batch_methods_need_parameter_columns(tetra_bank):
-    """Batch methods need kappa, gamma and s columns."""
+    """Batch methods need kappa, gamma and s columns, and refuse tables that already have results."""
     with pytest.raises(ValueError, match="missing columns"):
         tetra_bank.query_many(pd.DataFrame({"kappa": [0.1], "gamma": [0.1]}))
+    with pytest.raises(ValueError, match="already has result columns"):
+        tetra_bank.query_many(tetra_bank.query_many(batch_table()))
 
 
 def test_hit_summary(tetra_bank):

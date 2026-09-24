@@ -1,3 +1,4 @@
+import gc
 import subprocess
 import sys
 
@@ -79,3 +80,11 @@ def test_locks_are_released_on_close(bank):
     with MapBank.open(path, writable=True) as reopened:
         assert "pid=" in (path / "minima" / ".lock").read_text()
         assert reopened._regions["minima"].writable
+
+
+def test_a_dropped_writable_bank_releases_its_locks(config, tmp_path):
+    """A writable bank dropped without close() still releases its locks."""
+    MapBank.create(tmp_path / "dropped", config)
+    gc.collect()
+    reopened = MapBank.open(tmp_path / "dropped", writable=True)
+    reopened.close()

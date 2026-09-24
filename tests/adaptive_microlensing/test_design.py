@@ -68,15 +68,19 @@ def test_build_stops_on_the_residual_goal(bank):
 
 
 def test_interrupted_build_resumes_deterministically(tmp_path, config):
-    """A build interrupted and resumed makes the same entries as one uninterrupted build."""
+    """A build of the saddle region interrupted and resumed matches one uninterrupted build.
+
+    The saddle hull has 18 vertices, so with 24-then-40 valid entries the resumed run
+    replays more than just hull vertices.
+    """
     with MapBank.create(tmp_path / "straight", config) as straight:
-        straight.build("maxima", StoppingCriteria(max_valid_points=16))
-        expected = straight.entries("maxima")
+        straight.build("saddle", StoppingCriteria(max_valid_points=40))
+        expected = straight.entries("saddle")
     with MapBank.create(tmp_path / "resumed", config) as first:
-        first.build("maxima", StoppingCriteria(max_valid_points=8))
-    with MapBank.open(tmp_path / "resumed", writable=["maxima"]) as second:
-        second.build("maxima", StoppingCriteria(max_valid_points=16))
-        resumed = second.entries("maxima")
+        first.build("saddle", StoppingCriteria(max_valid_points=24))
+    with MapBank.open(tmp_path / "resumed", writable=["saddle"]) as second:
+        second.build("saddle", StoppingCriteria(max_valid_points=40))
+        resumed = second.entries("saddle")
     pd.testing.assert_frame_equal(resumed.drop(columns="created_at"), expected.drop(columns="created_at"))
 
 

@@ -191,6 +191,11 @@ def fetch_row(result: FetchResult) -> dict[str, Any]:
 
 def results_table(table: pd.DataFrame, rows: list[dict[str, Any]], columns: Sequence[str]) -> pd.DataFrame:
     """``table`` with one result row per input row appended as columns."""
+    overlap = sorted(set(columns) & set(table.columns))
+    if overlap:
+        raise ValueError(
+            f"The table already has result columns {overlap}; drop them before running it again."
+        )
     diagnostics = pd.DataFrame.from_records(rows, index=table.index, columns=list(columns))
     for column in _INTEGER_COLUMNS:
         if column in diagnostics:

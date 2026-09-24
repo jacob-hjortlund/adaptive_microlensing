@@ -27,11 +27,11 @@ Usage
 
    from adaptive_microlensing import MapBank, BankConfig, StoppingCriteria, hit_summary
 
-   # Build: one adaptive design per image type. Each region can run in its own GPU job.
-   bank = MapBank.create("bank/", BankConfig())
-   bank.build("minima", StoppingCriteria(max_valid_points=500))
-   bank.finalize("minima")
-   bank.close()
+   # Build: create the bank once, then build each region in its own GPU job.
+   MapBank.create("bank/", BankConfig()).close()
+   with MapBank.open("bank/", writable=["minima"]) as bank:
+       bank.build("minima", StoppingCriteria(max_valid_points=500))
+       bank.finalize("minima")
 
    # Load and query (read-only, no GPU needed).
    bank = MapBank.open("bank/")

@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import socket
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -277,17 +278,34 @@ class RegionStore:
 _HELD_LOCKS: set[Path] = set()
 
 
+def _release_lock(fd: int, key: Path) -> None:
+    """Release a region lock's OS resources: unlock, close the fd, and forget its key.
+
+    Tolerates an already-closed fd (an ``OSError`` on unlock is ignored).
+    """
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+        _HELD_LOCKS.discard(key)
+
+
 class RegionLock:
     """Exclusive, non-blocking writer lock on one region directory.
 
     Uses ``fcntl.flock`` on the region's ``.lock`` file. On NFSv4 this is a
     whole-file lock held by the server, so it also excludes writers on other nodes.
+    The lock is also released when this object is garbage-collected, even if
+    ``release`` was never called.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self._fd: int | None = None
         self._key: Path | None = None
+        self._finalizer: weakref.finalize | None = None
 
     def acquire(self) -> None:
         """Take the lock or raise ``BankLockedError``."""
@@ -311,16 +329,13 @@ class RegionLock:
         self._fd = fd
         self._key = key
         _HELD_LOCKS.add(key)
+        self._finalizer = weakref.finalize(self, _release_lock, fd, key)
 
     def release(self) -> None:
         """Release the lock if it is held."""
         if self._fd is None:
             return
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
-        finally:
-            os.close(self._fd)
-            self._fd = None
-            if self._key is not None:
-                _HELD_LOCKS.discard(self._key)
-                self._key = None
+        if self._finalizer is not None:
+            self._finalizer()
+        self._fd = None
+        self._key = None
