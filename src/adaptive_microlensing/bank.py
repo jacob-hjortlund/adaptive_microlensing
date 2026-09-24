@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from ._version import __version__
-from .config import BankConfig
+from .config import BankConfig, StoppingCriteria
 from .errors import (
     BankCorruptError,
     BankReadOnlyError,
@@ -33,6 +33,7 @@ from .results import (
     FETCH_COLUMNS,
     QUERY_COLUMNS,
     BankEntry,
+    BuildSummary,
     FetchResult,
     FetchStatus,
     QueryResult,
@@ -285,6 +286,21 @@ class MapBank:
         return pd.DataFrame.from_records(records).set_index("region")
 
     # -------------------------------------------------------------- build, finalize
+
+    def build(
+        self,
+        region: str,
+        stop: StoppingCriteria | None = None,
+        *,
+        generator: MapGenerator | None = None,
+    ) -> BuildSummary:
+        """Add entries to a region by adaptive sampling until a stopping rule holds.
+
+        Resumes from the entries already in the region.
+        """
+        from .design import build_region
+
+        return build_region(self, region, StoppingCriteria() if stop is None else stop, generator)
 
     def finalize(self, region: str) -> None:
         """Freeze the region's bank-MPD bin edges and compute the MPDs of its maps."""
