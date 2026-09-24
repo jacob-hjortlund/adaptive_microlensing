@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +83,18 @@ def _legacy_entries(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+def _remove_partial_import(destination: Path, existed: bool) -> None:
+    """Delete everything a failed import wrote; the destination was absent or empty beforehand."""
+    if not existed:
+        shutil.rmtree(destination)
+        return
+    for child in destination.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
 def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
     """Create a bank at ``destination`` from the outputs of the original adaptive_mpd scripts.
 
@@ -89,7 +102,8 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
     containing ``{region}_data.csv`` and ``maps/{region}/microlensing_map_NNNN.npy``.
     Maps are linked with absolute symlinks, never copied. All three regions share one
     set of bank-MPD bin edges, as in the original query script, and are finalized.
-    Returns the bank opened for writing.
+    If the import fails, everything it wrote is removed again. Returns the bank opened
+    for writing.
     """
     source = Path(source).resolve()
     frames = {region: read_legacy_region(source, region) for region in REGIONS}
@@ -99,6 +113,8 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
             if not path.is_file():
                 raise FileNotFoundError(f"Missing map for valid {region} row {int(row)}: {path}")
 
+    destination = Path(destination)
+    existed = destination.exists()
     bank = MapBank.create(destination, LEGACY_CONFIG)
     try:
         minima: list[float] = []
@@ -122,5 +138,6 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
             bank._finalize_with_edges(region, edges)
     except BaseException:
         bank.close()
+        _remove_partial_import(destination, existed)
         raise
     return bank

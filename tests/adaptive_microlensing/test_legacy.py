@@ -3,9 +3,10 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from adaptive_microlensing import MapBank, MapSpec, SyntheticGenerator, import_legacy_bank
+from adaptive_microlensing import MapBank, MapSpec, SyntheticGenerator, import_legacy_bank, legacy
 from adaptive_microlensing.legacy import LEGACY_CONFIG
 from adaptive_microlensing.lensing import REGIONS, classify_image, in_domain
+from adaptive_microlensing.mpd import finite_range
 from legacy_reference import legacy_query_table
 
 # Column order of the original {region}_data.csv files.
@@ -143,10 +144,34 @@ def test_query_matches_the_original_query_script(imported, legacy_source):
         assert new.loc[rows, "interpolation_status"].isin(new_statuses).all(), old_status
 
 
-def test_import_refuses_missing_maps_and_existing_destinations(tmp_path, legacy_source, imported):
-    """Import refuses missing maps and existing destinations."""
+def test_import_refuses_bad_input_and_cleans_up_after_failures(
+    tmp_path, legacy_source, imported, monkeypatch
+):
+    """Import refuses existing destinations and missing maps, and removes what a failed import wrote."""
     with pytest.raises(FileExistsError):
         import_legacy_bank(legacy_source, imported.path)
+
+    calls = []
+
+    def failing_finite_range(mag_map):
+        calls.append(1)
+        if len(calls) == 30:  # part-way through the saddle maps
+            raise OSError("simulated read failure")
+        return finite_range(mag_map)
+
+    monkeypatch.setattr(legacy, "finite_range", failing_finite_range)
+    with pytest.raises(OSError, match="simulated"):
+        import_legacy_bank(legacy_source, tmp_path / "partial")
+    assert not (tmp_path / "partial").exists()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    calls.clear()
+    with pytest.raises(OSError, match="simulated"):
+        import_legacy_bank(legacy_source, empty)
+    assert empty.is_dir() and not any(empty.iterdir())
+    assert (legacy_source / "maps" / "minima" / "microlensing_map_0000.npy").is_file()
+    monkeypatch.undo()
+
     (legacy_source / "maps" / "minima" / "microlensing_map_0000.npy").unlink()
     with pytest.raises(FileNotFoundError, match="minima row 0"):
         import_legacy_bank(legacy_source, tmp_path / "other")
