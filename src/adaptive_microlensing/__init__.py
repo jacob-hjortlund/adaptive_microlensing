@@ -21,6 +21,7 @@ from .errors import (
     MapGenerationError,
     RegionStateError,
 )
+from .legacy import import_legacy_bank
 from .maps import (
     IPMGenerator,
     MapGenerator,
@@ -67,5 +68,6 @@ __all__ = [
     "__version__",
     "generator_from_spec",
     "hit_summary",
+    "import_legacy_bank",
     "register_generator",
 ]
