@@ -30,10 +30,14 @@ from .lensing import CRITICAL, REGIONS, classify_image, in_box, in_domain
 from .maps import MapGenerator, generator_from_spec, generator_identity
 from .mpd import bin_edges_from_range, finite_range, histogram_with_overflow, intrinsic_quantile
 from .results import (
+    FETCH_COLUMNS,
     QUERY_COLUMNS,
     BankEntry,
+    FetchResult,
+    FetchStatus,
     QueryResult,
     QueryStatus,
+    fetch_row,
     query_row,
     results_table,
 )
@@ -51,6 +55,13 @@ from .storage import (
 )
 
 logger = logging.getLogger("adaptive_microlensing")
+
+_REFUSALS = {
+    QueryStatus.MALFORMED: FetchStatus.MALFORMED,
+    QueryStatus.CRITICAL_LINE: FetchStatus.CRITICAL_LINE,
+    QueryStatus.OUTSIDE_DOMAIN: FetchStatus.OUTSIDE_DOMAIN,
+    QueryStatus.REGION_NOT_READY: FetchStatus.REGION_NOT_READY,
+}
 
 
 def entry_seeds(seed: int, region: str, entry_id: int) -> tuple[int, int]:
@@ -365,6 +376,37 @@ class MapBank:
             **common,
         )
 
+    def fetch(
+        self,
+        kappa: float,
+        gamma: float,
+        s: float,
+        *,
+        generator: MapGenerator | None = None,
+        allow_outside_domain: bool = False,
+    ) -> FetchResult:
+        """Return a matching map, creating one at (kappa, gamma, s) and adding it on a miss."""
+        result = self.query(kappa, gamma, s, allow_outside_domain=allow_outside_domain)
+        if result.status is QueryStatus.HIT:
+            return FetchResult(FetchStatus.HIT, result.entry, False, result)
+        if result.status in _REFUSALS:
+            return FetchResult(_REFUSALS[result.status], None, False, result)
+        region = result.region
+        assert region is not None
+        if result.coincident_entry_id is not None:
+            error = str(self._regions[region].entries["error"].iloc[result.coincident_entry_id])
+            return FetchResult(FetchStatus.KNOWN_FAILURE, None, False, result, error or None)
+        self._require_writable(region)
+        pending = self._evaluate_entry(
+            region, (float(kappa), float(gamma), float(s)), self._resolve_generator(generator), "fetch"
+        )
+        self._commit(region, pending)
+        if pending.valid:
+            return FetchResult(
+                FetchStatus.CREATED, self._entry(region, pending.row["entry_id"]), True, result
+            )
+        return FetchResult(FetchStatus.CREATION_FAILED, None, False, result, pending.row["error"])
+
     def query_many(self, table: pd.DataFrame, *, allow_outside_domain: bool = False) -> pd.DataFrame:
         """Query every row of a table with ``kappa``, ``gamma`` and ``s`` columns."""
         rows = [
@@ -372,6 +414,22 @@ class MapBank:
             for kappa, gamma, s in _parameters(table)
         ]
         return results_table(table, rows, QUERY_COLUMNS)
+
+    def fetch_many(
+        self,
+        table: pd.DataFrame,
+        *,
+        generator: MapGenerator | None = None,
+        allow_outside_domain: bool = False,
+    ) -> pd.DataFrame:
+        """Fetch every row of a table in order; each new map is committed as soon as it is made."""
+        rows = [
+            fetch_row(
+                self.fetch(kappa, gamma, s, generator=generator, allow_outside_domain=allow_outside_domain)
+            )
+            for kappa, gamma, s in _parameters(table)
+        ]
+        return results_table(table, rows, FETCH_COLUMNS)
 
     # ------------------------------------------------------------------ internals
 
