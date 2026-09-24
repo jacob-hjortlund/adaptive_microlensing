@@ -1,8 +1,9 @@
 """Reference copies of the original adaptive_mpd code, used as test oracles.
 
-``mpd_distance_quantile`` is copied from ``mpd_distance.py``. The query code is copied
-from ``run_mpd_interpolator.py`` with printing and progress bars removed. Do not
-"improve" this module: it must behave exactly like the original scripts.
+``mpd_distance_quantile`` is copied unchanged from ``mpd_distance.py``. The query code is
+a port of ``run_mpd_interpolator.py``: it keeps the arithmetic and control flow exactly,
+but drops input validation, printing and progress bars, because the oracle only runs on
+valid data. Do not "improve" this module: its numbers must match the original scripts.
 """
 
 from __future__ import annotations
