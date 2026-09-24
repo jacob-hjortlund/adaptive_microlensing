@@ -86,11 +86,16 @@ class IPMGenerator:
     name = "ipm"
 
     def __init__(self, options: Mapping[str, Any] | None = None, verbose: int = 0) -> None:
-        self.options = dict(options or {})
-        reserved = sorted(_RESERVED_IPM_OPTIONS.intersection(self.options))
+        self._options = dict(options or {})
+        reserved = sorted(_RESERVED_IPM_OPTIONS.intersection(self._options))
         if reserved:
             raise ValueError(f"IPMGenerator sets {reserved} itself; remove them from options.")
         self.verbose = int(verbose)
+
+    @property
+    def options(self) -> dict[str, Any]:
+        """The extra IPM keyword arguments, as a copy; they are part of the generator's identity."""
+        return dict(self._options)
 
     def version(self) -> str | None:
         """Installed version of ``microlensing``, or None if it is not installed."""
@@ -122,7 +127,7 @@ class IPMGenerator:
                 num_pixels_y2=n,
                 random_seed=seed,
                 verbose=self.verbose,
-                **self.options,
+                **self._options,
             )
             ipm.run()
             magnifications = np.array(ipm.magnifications, dtype=np.float64)

@@ -44,6 +44,8 @@ def test_registry_builds_generators_from_specs():
     ipm = generator_from_spec(GeneratorSpec())
     assert isinstance(ipm, IPMGenerator)
     assert ipm.options == {"rectangular": True}
+    ipm.options["rectangular"] = False
+    assert ipm.options == {"rectangular": True}
     assert isinstance(ipm, MapGenerator)
     with pytest.raises(ValueError, match="No map generator"):
         generator_from_spec(GeneratorSpec("nonexistent", {}))
