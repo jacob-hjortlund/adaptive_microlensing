@@ -215,6 +215,10 @@ class GeneratorSpec:
             raise ValueError(f"GeneratorSpec.options must be JSON-serialisable: {exc}") from exc
         object.__setattr__(self, "options", options)
 
+    def __hash__(self) -> int:
+        """Hash the name and the canonical JSON of the options, since a dict is not hashable."""
+        return hash((self.name, json.dumps(self.options, sort_keys=True)))
+
     @classmethod
     def from_generator(cls, generator: Any) -> GeneratorSpec:
         """The spec that identifies ``generator``: its name and options."""

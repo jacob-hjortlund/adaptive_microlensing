@@ -39,6 +39,7 @@ def test_config_round_trips_through_json():
     restored = BankConfig.from_dict(json.loads(json.dumps(config.to_dict())))
     assert restored == config
     assert isinstance(restored.domain.kappa_range, tuple)
+    assert hash(restored) == hash(config)
 
 
 @pytest.mark.parametrize(
