@@ -20,6 +20,13 @@ from .errors import (
     MapGenerationError,
     RegionStateError,
 )
+from .maps import (
+    IPMGenerator,
+    MapGenerator,
+    generator_from_spec,
+    register_generator,
+)
+from .synthetic import SyntheticGenerator
 
 __all__ = [
     "BankConfig",
@@ -31,11 +38,16 @@ __all__ = [
     "DomainSpec",
     "GeneratorMismatchError",
     "GeneratorSpec",
+    "IPMGenerator",
     "InvalidMapError",
     "MapGenerationError",
+    "MapGenerator",
     "MapSpec",
     "RegionStateError",
     "StoppingCriteria",
+    "SyntheticGenerator",
     "VariabilitySpec",
     "__version__",
+    "generator_from_spec",
+    "register_generator",
 ]
