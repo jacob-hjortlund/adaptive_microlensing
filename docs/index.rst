@@ -6,6 +6,48 @@
 Welcome to adaptive_microlensing's documentation!
 ========================================================================================
 
+``adaptive_microlensing`` keeps banks of microlensing magnitude maps that are built
+adaptively, queried for statistically equivalent maps, and extended on demand.
+
+A bank covers total convergence :math:`\kappa`, shear :math:`\gamma` and smooth-matter
+fraction :math:`s`, with a separate region for each macro-image type (minima, saddles and
+maxima). A query finds the tetrahedron of bank entries around a point and asks whether one
+of their maps is indistinguishable from a map made at that point: the interpolated
+Jensen–Shannon distance between magnification probability distributions (MPDs) must not
+exceed the maps' own window-to-window variability. On a hit the existing map is returned;
+on a miss, ``fetch`` makes a new map at the query point, adds it to the bank and returns it.
+
+
+Usage
+-----
+
+.. code-block:: python
+
+   import pandas as pd
+
+   from adaptive_microlensing import MapBank, BankConfig, StoppingCriteria, hit_summary
+
+   # Build: one adaptive design per image type. Each region can run in its own GPU job.
+   bank = MapBank.create("bank/", BankConfig())
+   bank.build("minima", StoppingCriteria(max_valid_points=500))
+   bank.finalize("minima")
+   bank.close()
+
+   # Load and query (read-only, no GPU needed).
+   bank = MapBank.open("bank/")
+   result = bank.query(0.41, 0.50, 0.25)
+   if result.is_hit:
+       magnitudes = result.entry.load()  # memory-mapped array
+
+   # Update: return a matching map, or make one and add it to the bank.
+   with MapBank.open("bank/", writable=True) as bank:
+       fetched = bank.fetch(0.41, 0.50, 0.25)
+       table = bank.fetch_many(pd.read_csv("image_params.csv"))
+       print(hit_summary(table))
+
+Banks made by the original ``adaptive_mpd`` scripts can be imported without copying their
+maps with :func:`adaptive_microlensing.import_legacy_bank`. The quickstart notebook runs
+the whole workflow with :class:`adaptive_microlensing.SyntheticGenerator`, which needs no GPU.
 
 
 Dev Guide - Getting Started

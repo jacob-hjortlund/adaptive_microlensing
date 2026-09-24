@@ -1,8 +1,6 @@
 
 # adaptive_microlensing
 
-
-
 [![Template](https://img.shields.io/badge/Template-LINCC%20Frameworks%20Python%20Project%20Template-brightgreen)](https://lincc-ppt.readthedocs.io/en/latest/)
 
 [![PyPI](https://img.shields.io/pypi/v/adaptive_microlensing?color=blue&logo=pypi&logoColor=white)](https://pypi.org/project/adaptive_microlensing/)
@@ -11,14 +9,76 @@
 [![Read The Docs](https://img.shields.io/readthedocs/adaptive-microlensing)](https://adaptive-microlensing.readthedocs.io/)
 [![Benchmarks](https://img.shields.io/github/actions/workflow/status/my-organization/adaptive_microlensing/asv-main.yml?label=benchmarks)](https://my-organization.github.io/adaptive_microlensing/)
 
-This project was automatically generated using the LINCC-Frameworks 
-[python-project-template](https://github.com/lincc-frameworks/python-project-template).
+Banks of microlensing magnitude maps that are built adaptively, queried for statistically
+equivalent maps, and extended on demand.
 
-A repository badge was added to show that this project uses the python-project-template, however it's up to
-you whether or not you'd like to display it!
+A bank covers total convergence κ, shear γ and smooth-matter fraction s, with a separate
+region for each macro-image type (minima, saddles and maxima). A query finds the tetrahedron
+of bank entries around a point and asks whether one of their maps is indistinguishable from
+a map made at that point: the interpolated Jensen–Shannon distance between magnification
+probability distributions (MPDs) must not exceed the maps' own window-to-window variability.
+On a hit the existing map is returned; on a miss, `fetch` makes a new map at the query point,
+adds it to the bank and returns it.
 
-For more information about the project template see the 
-[documentation](https://lincc-ppt.readthedocs.io/en/latest/).
+## Installation
+
+From a clone of this repository:
+
+```
+>> pip install .           # build, load and query banks
+>> pip install '.[ipm]'    # also make maps on a GPU with the microlensing package
+```
+
+## Usage
+
+```python
+import pandas as pd
+
+from adaptive_microlensing import MapBank, BankConfig, StoppingCriteria, hit_summary
+
+# Build: one adaptive design per image type. Each region can run in its own GPU job.
+bank = MapBank.create("bank/", BankConfig())
+bank.build("minima", StoppingCriteria(max_valid_points=500))
+bank.finalize("minima")
+bank.close()
+
+# Load and query (read-only, no GPU needed).
+bank = MapBank.open("bank/")
+result = bank.query(0.41, 0.50, 0.25)
+if result.is_hit:
+    magnitudes = result.entry.load()  # memory-mapped array
+
+# Update: return a matching map, or make one and add it to the bank.
+with MapBank.open("bank/", writable=True) as bank:
+    fetched = bank.fetch(0.41, 0.50, 0.25)
+    table = bank.fetch_many(pd.read_csv("image_params.csv"))  # needs kappa, gamma, s columns
+    print(hit_summary(table))
+```
+
+Banks made by the original `adaptive_mpd` scripts can be imported without copying their maps:
+
+```python
+from adaptive_microlensing import import_legacy_bank
+
+bank = import_legacy_bank("adaptive_mpd/smooth_frac_range_output", "legacy_bank/")
+```
+
+Progress is reported through the `adaptive_microlensing` logger; call
+`logging.basicConfig(level=logging.INFO)` to see it.
+
+## Bank layout
+
+```
+bank/
+  bank.json                  # configuration and package versions, written once
+  minima/ saddle/ maxima/
+    region.json              # finalized flag and frozen MPD bin edges
+    entries.csv              # one row per entry: parameters, validity, seeds, provenance
+    mpds.npy                 # one MPD per entry
+    maps/map_000123.npy      # the bank maps
+```
+
+Any number of processes may read a bank at once; each region accepts one writer at a time.
 
 ## Dev Guide - Getting Started
 
@@ -43,7 +103,7 @@ development using the following commands:
 Notes:
 1. `./.setup_dev.sh` will initialize pre-commit for this local repository, so
    that a set of tests will be run prior to completing a local commit. For more
-   information, see the Python Project Template documentation on 
+   information, see the Python Project Template documentation on
    [pre-commit](https://lincc-ppt.readthedocs.io/en/latest/practices/precommit.html)
 2. Install `pandoc` allows you to verify that automatic rendering of Jupyter notebooks
    into documentation for ReadTheDocs works as expected. For more information, see
