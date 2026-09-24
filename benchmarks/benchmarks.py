@@ -1,16 +1,11 @@
-"""Two sample benchmarks to compute runtime and memory usage.
+"""Benchmarks, run with airspeed velocity (asv).
 
 For more information on writing benchmarks:
 https://asv.readthedocs.io/en/stable/writing_benchmarks.html."""
 
-from adaptive_microlensing import example_benchmarks
+import adaptive_microlensing
 
 
-def time_computation():
-    """Time computations are prefixed with 'time'."""
-    example_benchmarks.runtime_computation()
-
-
-def mem_list():
-    """Memory computations are prefixed with 'mem' or 'peakmem'."""
-    return example_benchmarks.memory_computation()
+def time_import():
+    """Placeholder until the map bank exists; replaced by the query benchmarks."""
+    return adaptive_microlensing.__version__

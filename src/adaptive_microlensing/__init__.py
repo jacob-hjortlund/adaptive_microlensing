@@ -1,4 +1,7 @@
-from ._version import __version__
-from .example_module import greetings, meaning
+"""Adaptive banks of microlensing magnitude maps that can be built, queried and updated."""
 
-__all__ = ["greetings", "meaning", "__version__"]
+from ._version import __version__
+
+__all__ = [
+    "__version__",
+]

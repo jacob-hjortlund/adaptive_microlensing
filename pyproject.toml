@@ -1,6 +1,7 @@
 
 [project]
 name = "adaptive_microlensing"
+description = "Adaptive banks of microlensing magnitude maps that can be built, queried and updated."
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -15,8 +16,12 @@ classifiers = [
     "Programming Language :: Python",
 ]
 dynamic = ["version"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
+    "adaptive>=1.0",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
 ]
 
 [project.urls]
@@ -24,6 +29,9 @@ dependencies = [
 
 # On a mac, install optional dependencies with `pip install '.[dev]'` (include the single quotes)
 [project.optional-dependencies]
+ipm = [
+    "microlensing>=0.1.7", # GPU map generation with IPM
+]
 dev = [
     "asv[virtualenv]==0.6.5", # Used to compute performance benchmarks
     "black", # Used for static linting of files
@@ -99,7 +107,8 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+# NumPy >= 2.5 ships stubs that use Python 3.12 syntax.
+python_version = "3.12"
 [tool.setuptools.package-data]
 adaptive_microlensing = ["py.typed"]
 

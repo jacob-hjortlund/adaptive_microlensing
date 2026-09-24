@@ -15,12 +15,11 @@ include_docs: true
 include_notebooks: true
 mypy_type_checking: basic
 package_name: adaptive_microlensing
-project_description: ''
+project_description: Adaptive banks of microlensing magnitude maps that can be built, queried and updated.
 project_license: MIT
 project_name: adaptive_microlensing
 project_organization: my-organization
 python_versions:
-- '3.10'
 - '3.11'
 - '3.12'
 - '3.13'
