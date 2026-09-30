@@ -256,10 +256,10 @@ def atomic_save_array(path: Path, array: np.ndarray) -> None:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    """Read a JSON file, raising ``BankCorruptError`` if it is missing or not valid JSON.
+    """Read a JSON object from a file, raising ``BankCorruptError`` if it is missing or unreadable.
 
     Used for ``bank.json`` and ``region.json``. The file is decoded as UTF-8. Other errors,
-    such as a permission error or bytes that are not UTF-8, propagate unchanged.
+    such as a permission error, propagate unchanged.
 
     Parameters
     ----------
@@ -269,19 +269,22 @@ def read_json(path: Path) -> dict[str, Any]:
     Returns
     -------
     dict of str to Any
-        The decoded JSON. That its top-level value is an object is not checked.
+        The decoded JSON object.
 
     Raises
     ------
     BankCorruptError
-        If the file does not exist or does not hold valid JSON.
+        If the file does not exist, is not UTF-8, does not hold valid JSON, or holds JSON
+        whose top-level value is not an object.
     """
     try:
-        payload: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise BankCorruptError(f"Missing file {path}.") from exc
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise BankCorruptError(f"Unreadable JSON in {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise BankCorruptError(f"{path} does not hold a JSON object.")
     return payload
 
 
@@ -586,28 +589,30 @@ class RegionStore:
         ------
         BankCorruptError
             If ``region.json``, ``entries.csv`` or ``mpds.npy`` is missing; if
-            ``region.json`` is not valid JSON or does not describe schema
-            :data:`SCHEMA_VERSION` of this region; if ``entries.csv`` is malformed; if
-            ``mpds.npy`` is not two-dimensional with ``n_mpd_columns`` columns, or has
-            fewer rows than the table; if the ``entry_id`` values are not ``0, 1, 2, ...``;
-            or if the region is finalized and the MPD of a valid entry contains NaN.
-
-        Notes
-        -----
-        Other errors propagate unchanged. For example, an ``mpds.npy`` that NumPy cannot
-        read raises ``ValueError``, and a ``region.json`` without a ``finalized`` key
-        raises ``KeyError``.
+            ``region.json`` is unreadable (see :func:`read_json`), does not describe schema
+            :data:`SCHEMA_VERSION` of this region, lacks a boolean ``finalized`` or the
+            ``bin_edges`` field, or is finalized without bin edges; if ``entries.csv`` is
+            malformed; if NumPy cannot read ``mpds.npy``, or it is not two-dimensional with
+            ``n_mpd_columns`` columns, or has fewer rows than the table; if the
+            ``entry_id`` values are not ``0, 1, 2, ...``; or if the region is finalized and
+            the MPD of a valid entry contains NaN.
         """
         meta = read_json(self.meta_path)
         if meta.get("schema_version") != SCHEMA_VERSION or meta.get("region") != self.region:
             raise BankCorruptError(
                 f"{self.meta_path} does not describe schema {SCHEMA_VERSION} {self.region!r}."
             )
+        if not isinstance(meta.get("finalized"), bool) or "bin_edges" not in meta:
+            raise BankCorruptError(f"{self.meta_path} lacks a boolean 'finalized' or the 'bin_edges' field.")
+        if meta["finalized"] and meta["bin_edges"] is None:
+            raise BankCorruptError(f"{self.meta_path} is finalized but has no bin edges.")
         entries = read_entries(self.entries_path)
         try:
             mpds = np.load(self.mpds_path, allow_pickle=False)
         except FileNotFoundError as exc:
             raise BankCorruptError(f"Missing file {self.mpds_path}.") from exc
+        except (ValueError, EOFError) as exc:
+            raise BankCorruptError(f"Unreadable array in {self.mpds_path}: {exc}") from exc
         if mpds.ndim != 2 or mpds.shape[1] != n_mpd_columns:
             raise BankCorruptError(f"{self.mpds_path} has shape {mpds.shape}; expected (n, {n_mpd_columns}).")
         if len(mpds) < len(entries):

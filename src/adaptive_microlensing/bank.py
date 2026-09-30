@@ -440,9 +440,9 @@ class MapBank:
         Raises
         ------
         BankCorruptError
-            If ``bank.json`` is missing, is not valid JSON or has an unknown schema
-            version, or if a region's files are missing, malformed or inconsistent with
-            each other.
+            If ``bank.json`` is missing, is not a readable JSON object, has an unknown
+            schema version or holds no valid configuration, or if a region's files are
+            missing, malformed or inconsistent with each other.
         ValueError
             If ``writable`` names a region that is not one of ``REGIONS``.
         BankLockedError
@@ -453,7 +453,12 @@ class MapBank:
         meta = read_json(root / BANK_FILE)
         if meta.get("schema_version") != SCHEMA_VERSION:
             raise BankCorruptError(f"{root / BANK_FILE} has an unknown schema version.")
-        config = BankConfig.from_dict(meta["config"])
+        try:
+            config = BankConfig.from_dict(meta["config"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BankCorruptError(
+                f"{root / BANK_FILE} holds no valid configuration: {type(exc).__name__}: {exc}"
+            ) from exc
         to_lock = _writable_regions(writable)
         locks: list[RegionLock] = []
         try:

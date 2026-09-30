@@ -3,6 +3,7 @@ import json
 import numpy as np
 import pytest
 from adaptive_microlensing import (
+    BankCorruptError,
     BankReadOnlyError,
     MapBank,
     QueryStatus,
@@ -41,6 +42,31 @@ def test_open_writable_argument(tetra_bank):
         assert [r for r, s in writer._regions.items() if s.writable] == ["saddle"]
     with pytest.raises(ValueError, match="Unknown regions"):
         MapBank.open(path, writable=["ring"])
+
+
+UNUSABLE_BANK_JSON = {
+    "a list": lambda meta: [1],
+    "no config": lambda meta: {key: value for key, value in meta.items() if key != "config"},
+    "a config without a seed": lambda meta: {
+        **meta,
+        "config": {key: value for key, value in meta["config"].items() if key != "seed"},
+    },
+    "an invalid config value": lambda meta: {**meta, "config": {**meta["config"], "n_bin_edges": 1}},
+    "an unknown config field": lambda meta: {
+        **meta,
+        "config": {**meta["config"], "domain": {**meta["config"]["domain"], "bogus": 1}},
+    },
+}
+
+
+@pytest.mark.parametrize("edit", UNUSABLE_BANK_JSON.values(), ids=UNUSABLE_BANK_JSON.keys())
+def test_open_reports_an_unusable_bank_json_as_corrupt(bank, edit):
+    """A bank.json that is not an object or holds no valid configuration raises BankCorruptError."""
+    path = bank.path / "bank.json"
+    bank.close()
+    path.write_text(json.dumps(edit(json.loads(path.read_text()))))
+    with pytest.raises(BankCorruptError, match=r"bank\.json"):
+        MapBank.open(bank.path)
 
 
 def test_entry_seeds_are_deterministic_positive_c_ints():

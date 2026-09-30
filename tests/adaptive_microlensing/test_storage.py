@@ -119,6 +119,53 @@ def test_region_store_snapshot_rules(tmp_path):
         store.load(4)
 
 
+def _finalized_store(tmp_path):
+    """A finalized region store with one valid entry and 4-column MPDs."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    store.commit(append_entry(empty_entries(), _row(0)), np.ones((1, 4)))
+    store.write_meta({**read_json(store.meta_path), "finalized": True, "bin_edges": [0.0, 1.0, 2.0]})
+    return store
+
+
+def _truncate_mpds(length):
+    """Corrupt mpds.npy by keeping only its first ``length`` bytes."""
+    return lambda store: store.mpds_path.write_bytes(store.mpds_path.read_bytes()[:length])
+
+
+def _edit_meta(edit):
+    """Corrupt region.json by rewriting its contents with ``edit``."""
+    return lambda store: store.write_meta(edit(read_json(store.meta_path)))
+
+
+def _without(key):
+    """Drop ``key`` from a mapping."""
+    return lambda meta: {name: value for name, value in meta.items() if name != key}
+
+
+CORRUPT_REGION_FILES = {
+    "mpds.npy of garbage": lambda store: store.mpds_path.write_bytes(b"not an npy file"),
+    "mpds.npy cut in its header": _truncate_mpds(100),
+    "mpds.npy cut in its data": _truncate_mpds(-8),
+    "empty mpds.npy": _truncate_mpds(0),
+    "region.json without finalized": _edit_meta(_without("finalized")),
+    "region.json without bin_edges": _edit_meta(_without("bin_edges")),
+    "finalized region.json without edges": _edit_meta(lambda meta: {**meta, "bin_edges": None}),
+    "region.json holding a list": lambda store: store.meta_path.write_text("[1]"),
+    "region.json that is not UTF-8": lambda store: store.meta_path.write_bytes(b'{"region": "\xff"}'),
+}
+
+
+@pytest.mark.parametrize("corrupt", CORRUPT_REGION_FILES.values(), ids=CORRUPT_REGION_FILES.keys())
+def test_unusable_region_files_are_reported_as_corrupt(tmp_path, corrupt):
+    """Region files that cannot be read or lack required fields raise BankCorruptError naming the file."""
+    store = _finalized_store(tmp_path)
+    assert store.load(4).meta["finalized"] is True
+    corrupt(store)
+    with pytest.raises(BankCorruptError, match=r"(mpds\.npy|region\.json)"):
+        store.load(4)
+
+
 def test_region_lock_release_is_idempotent(tmp_path):
     """A held lock excludes a second one; after a double release it can be taken again."""
     lock = RegionLock(tmp_path / ".lock")
