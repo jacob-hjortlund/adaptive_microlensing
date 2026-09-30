@@ -143,6 +143,31 @@ def _integer_at_least(value: Any, minimum: int, name: str) -> int:
     return int(value)
 
 
+def _hashable(value: Any) -> Any:
+    """Return a JSON-normalised value as nested tuples that compare and hash like it.
+
+    Dicts become tuples of ``(key, value)`` pairs sorted by key, and lists become tuples.
+    Numbers are kept as they are, so values that compare equal, such as ``1``, ``1.0`` and
+    ``True``, also hash equally, which JSON text would not do.
+
+    Parameters
+    ----------
+    value : Any
+        A value made of dicts with string keys, lists, strings, numbers, booleans and
+        ``None``, as JSON normalisation gives.
+
+    Returns
+    -------
+    Any
+        The hashable equivalent of ``value``.
+    """
+    if isinstance(value, dict):
+        return tuple(sorted((key, _hashable(item)) for key, item in value.items()))
+    if isinstance(value, list):
+        return tuple(_hashable(item) for item in value)
+    return value
+
+
 def _range(
     value: Sequence[float],
     name: str,
@@ -508,16 +533,18 @@ class GeneratorSpec:
         object.__setattr__(self, "options", options)
 
     def __hash__(self) -> int:
-        """Hash the name and the canonical JSON of the options, since a dict is not hashable.
+        """Hash the name and the options, since a dict is not hashable.
 
-        This also makes :class:`BankConfig`, whose generated hash includes this spec, hashable.
+        Specs that compare equal hash equally, even when their options differ only in
+        numeric type, such as ``1``, ``1.0`` and ``True``. This also makes
+        :class:`BankConfig`, whose generated hash includes this spec, hashable.
 
         Returns
         -------
         int
-            Hash of ``name`` and of ``options`` dumped to JSON with sorted keys.
+            Hash of ``name`` and of ``options`` converted by :func:`_hashable`.
         """
-        return hash((self.name, json.dumps(self.options, sort_keys=True)))
+        return hash((self.name, _hashable(self.options)))
 
     @classmethod
     def from_generator(cls, generator: Any) -> GeneratorSpec:

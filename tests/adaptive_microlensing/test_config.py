@@ -110,6 +110,17 @@ def test_generator_spec_normalises_options():
         GeneratorSpec("", {})
 
 
+def test_equal_generator_specs_hash_equally():
+    """Specs whose options compare equal, such as 1, 1.0 and True, are one key in a set."""
+    specs = [
+        GeneratorSpec("x", {"a": 1, "b": [2, {"c": True}]}),
+        GeneratorSpec("x", {"a": 1.0, "b": [2.0, {"c": 1}]}),
+    ]
+    assert specs[0] == specs[1]
+    assert len(set(specs)) == 1
+    assert len({BankConfig(generator=spec) for spec in specs}) == 1
+
+
 def test_bank_config_rejects_bad_values():
     """BankConfig rejects bad edge counts, seeds and field types."""
     with pytest.raises(ValueError, match="n_bin_edges"):
