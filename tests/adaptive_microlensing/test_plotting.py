@@ -361,6 +361,13 @@ def test_plot_build_panels_and_goals(built_bank):
         assert lines(ax, "max valid points")[0].get_xdata()[0] == 19
 
 
+def test_the_residual_maximum_is_labelled_as_a_rolling_window(built_bank):
+    """max_residual is the maximum of the last min_num_residuals residuals, not of every one so far."""
+    figure = plotting.plot_build(built_bank, "minima")
+    residual_ax = figure.axes[1]
+    assert [line.get_label() for line in residual_ax.lines] == ["rolling maximum"]
+
+
 def test_plot_build_rows_and_arguments(bank, built_bank, patchy_bank):
     """Build and legacy rows are plotted and fetch rows are not; bad axes and empty regions raise."""
     for point in TETRAHEDRON:

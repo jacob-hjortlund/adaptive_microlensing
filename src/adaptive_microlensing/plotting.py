@@ -86,7 +86,7 @@ GREY = PALETTE[7]
 #: hits nor misses in a margin scatter plot.
 LIGHT_GREY = "0.8"
 #: Dark grey level of the hatching of regions that are not ready, the "all" hit-rate line
-#: and the running-maximum residual line.
+#: and the rolling-maximum residual line.
 DARK_GREY = "0.2"
 
 #: (colour, marker) of each region. In this and the other ``*_STYLE`` constants, colours
@@ -1369,7 +1369,7 @@ def plot_build(
     - the relative residual of each entry (``rel_residual``), the absolute difference
       between its intrinsic quantile and the mesh's prediction there before it was added,
       over the quantile, as dots, and the build's ``max_residual``, the largest of the
-      last ``min_num_residuals`` relative residuals, as a dark grey line labelled "running
+      last ``min_num_residuals`` relative residuals, as a dark grey line labelled "rolling
       maximum", both on a log scale;
     - the fraction of valid entries among the entries drawn up to each one.
 
@@ -1451,7 +1451,7 @@ def plot_build(
     residual_ax.scatter(
         *positive("rel_residual"), color=PALETTE[0], s=6, linewidths=0.0, label="relative residual"
     )
-    residual_ax.plot(*positive("max_residual"), color=DARK_GREY, lw=1.2, label="running maximum")
+    residual_ax.plot(*positive("max_residual"), color=DARK_GREY, lw=1.2, label="rolling maximum")
     residual_ax.set_yscale("log")
     residual_ax.set_ylabel("relative residual")
     valid = rows["valid"].to_numpy(dtype=bool)
