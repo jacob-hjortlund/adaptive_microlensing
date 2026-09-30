@@ -531,6 +531,33 @@ def fetch_row(result: FetchResult) -> dict[str, Any]:
     }
 
 
+def check_result_columns(table: pd.DataFrame, columns: Sequence[str]) -> None:
+    """Check that a table has none of the result columns that would be appended to it.
+
+    :meth:`MapBank.query_many` and :meth:`MapBank.fetch_many` call it before their first
+    row, so a result table passed in again is refused before any map is made, and
+    :func:`results_table` calls it again before appending.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        Input table, one row per query.
+    columns : sequence of str
+        Names of the result columns, :data:`QUERY_COLUMNS` or :data:`FETCH_COLUMNS`.
+
+    Raises
+    ------
+    ValueError
+        If ``table`` already has one of ``columns``, as when a result table is passed in
+        again.
+    """
+    overlap = sorted(set(columns) & set(table.columns))
+    if overlap:
+        raise ValueError(
+            f"The table already has result columns {overlap}; drop them before running it again."
+        )
+
+
 def results_table(table: pd.DataFrame, rows: list[dict[str, Any]], columns: Sequence[str]) -> pd.DataFrame:
     """Return ``table`` with one result row per input row appended as columns.
 
@@ -565,11 +592,7 @@ def results_table(table: pd.DataFrame, rows: list[dict[str, Any]], columns: Sequ
         If ``table`` already has one of ``columns``, as when a result table is passed in
         again.
     """
-    overlap = sorted(set(columns) & set(table.columns))
-    if overlap:
-        raise ValueError(
-            f"The table already has result columns {overlap}; drop them before running it again."
-        )
+    check_result_columns(table, columns)
     diagnostics = pd.DataFrame.from_records(rows, index=table.index, columns=list(columns))
     for column in _INTEGER_COLUMNS:
         if column in diagnostics:

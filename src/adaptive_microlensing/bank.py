@@ -64,6 +64,7 @@ from .results import (
     FetchStatus,
     QueryResult,
     QueryStatus,
+    check_result_columns,
     fetch_row,
     query_row,
     results_table,
@@ -934,9 +935,11 @@ class MapBank:
         --------
         adaptive_microlensing.results.hit_summary : Hit counts and rates of the returned table.
         """
+        points = _parameters(table)
+        check_result_columns(table, QUERY_COLUMNS)
         rows = [
             query_row(self.query(kappa, gamma, s, allow_outside_domain=allow_outside_domain))
-            for kappa, gamma, s in _parameters(table)
+            for kappa, gamma, s in points
         ]
         return results_table(table, rows, QUERY_COLUMNS)
 
@@ -976,8 +979,8 @@ class MapBank:
         ------
         ValueError
             If ``table`` lacks a ``kappa``, ``gamma`` or ``s`` column, or already has one
-            of the result columns, or for a row as in :meth:`fetch`. The check for result
-            columns runs only after every row has been fetched.
+            of the result columns, or for a row as in :meth:`fetch`. The columns are
+            checked before any row is fetched.
         BankReadOnlyError
             If a row needs a new map and its region is not open for writing.
         GeneratorMismatchError
@@ -988,11 +991,14 @@ class MapBank:
         --------
         adaptive_microlensing.results.hit_summary : Hit counts and rates of the returned table.
         """
+        points = _parameters(table)
+        # Refuse a table that already has results before any row makes and commits a map.
+        check_result_columns(table, FETCH_COLUMNS)
         rows = [
             fetch_row(
                 self.fetch(kappa, gamma, s, generator=generator, allow_outside_domain=allow_outside_domain)
             )
-            for kappa, gamma, s in _parameters(table)
+            for kappa, gamma, s in points
         ]
         return results_table(table, rows, FETCH_COLUMNS)
 

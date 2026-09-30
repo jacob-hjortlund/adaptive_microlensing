@@ -125,3 +125,11 @@ def test_fetch_many_creates_in_order_and_reuses_new_maps(tetra_bank):
     assert result.loc[11, "map_path"].endswith("minima/maps/map_000004.npy")
     rerun = tetra_bank.fetch_many(batch_table())
     assert rerun["fetch_status"].tolist()[:3] == ["hit", "hit", "hit"]
+
+
+def test_fetch_many_refuses_a_table_with_results_before_making_maps(tetra_bank):
+    """A table that already has result columns is refused before any row is fetched."""
+    queried = tetra_bank.query_many(batch_table())
+    with pytest.raises(ValueError, match="already has result columns"):
+        tetra_bank.fetch_many(queried)
+    assert len(tetra_bank.entries("minima")) == len(TETRAHEDRON)
