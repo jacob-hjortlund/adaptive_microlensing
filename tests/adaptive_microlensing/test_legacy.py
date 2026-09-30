@@ -7,7 +7,7 @@ from adaptive_microlensing import MapBank, MapSpec, SyntheticGenerator, import_l
 from adaptive_microlensing.legacy import LEGACY_CONFIG
 from adaptive_microlensing.lensing import REGIONS, classify_image, in_domain
 from adaptive_microlensing.mpd import finite_range
-from legacy_reference import legacy_query_table
+from legacy_reference import determine_common_bin_edges, legacy_query_table
 
 # Column order of the original {region}_data.csv files.
 LEGACY_COLUMNS = [
@@ -230,6 +230,38 @@ def test_import_refuses_bad_input_and_cleans_up_after_failures(
     with pytest.raises(FileNotFoundError, match="minima row 0"):
         import_legacy_bank(legacy_source, tmp_path / "other")
     assert not (tmp_path / "other").exists()
+
+
+def _invalidate(source, region):
+    """Mark every row of a region's CSV invalid, as when every map of the region failed."""
+    path = source / f"{region}_data.csv"
+    frame = pd.read_csv(path)
+    frame["validity"] = 0.0
+    frame.to_csv(path, index=False)
+
+
+@pytest.mark.parametrize("region", REGIONS)
+def test_a_region_without_valid_rows_shares_the_edges_of_the_others(tmp_path, legacy_source, region):
+    """A region whose every row failed is imported and finalized with the other regions' edges."""
+    _invalidate(legacy_source, region)
+    region_inputs = {r: (legacy_source / f"{r}_data.csv", legacy_source / "maps" / r) for r in REGIONS}
+    expected = determine_common_bin_edges(region_inputs)
+    with import_legacy_bank(legacy_source, tmp_path / "imported") as bank:
+        summary = bank.summary()
+        assert summary.loc[region, "valid"] == 0
+        assert summary["finalized"].all()
+        for name in REGIONS:
+            edges = json.loads((bank.path / name / "region.json").read_text())["bin_edges"]
+            np.testing.assert_array_equal(edges, expected)
+
+
+def test_import_refuses_a_source_without_any_valid_row(tmp_path, legacy_source):
+    """Without a single valid map there are no bin edges, so nothing is imported."""
+    for region in REGIONS:
+        _invalidate(legacy_source, region)
+    with pytest.raises(ValueError, match="no valid rows"):
+        import_legacy_bank(legacy_source, tmp_path / "imported")
+    assert not (tmp_path / "imported").exists()
 
 
 def test_reopened_import_is_queryable(imported):

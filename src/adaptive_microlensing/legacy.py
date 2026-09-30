@@ -236,7 +236,8 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
         If a region's CSV is missing, or if a valid row has no map. Both are checked
         before anything is written.
     ValueError
-        If a region's CSV fails the checks of :func:`read_legacy_region`.
+        If a region's CSV fails the checks of :func:`read_legacy_region`, or if no region
+        has a valid row. Both are checked before anything is written.
     FileExistsError
         If ``destination`` exists and is not empty.
     InvalidMapError
@@ -246,8 +247,8 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
     -----
     The import runs in four steps:
 
-    1. All three CSVs are read and validated, and the map of every valid row is checked
-       to exist.
+    1. All three CSVs are read and validated, the map of every valid row is checked to
+       exist, and at least one region must have a valid row.
     2. An empty bank is created at ``destination`` with ``LEGACY_CONFIG``.
     3. For each region, the map of each valid row ``r`` is linked at
        ``maps/map_{r:06d}.npy`` in the region directory and scanned, memory-mapped, for
@@ -255,8 +256,10 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
        Progress is logged at INFO level. The region's entries (one per CSV row) are then
        committed, with NaN rows in place of their MPDs.
     4. One set of ``LEGACY_CONFIG.n_bin_edges`` bin edges is made from the smallest
-       ``mag_min`` and the largest ``mag_max`` over all three regions. Each region is
-       finalized with these edges, which computes the MPDs of its valid maps.
+       ``mag_min`` and the largest ``mag_max`` of the valid maps of all three regions, as
+       in the original query script. Each region is finalized with these edges, which
+       computes the MPDs of its valid maps; a region without valid rows is finalized with
+       them too, so maps that are fetched into it later share the same edges.
 
     If anything fails after the bank has been created, including a
     :exc:`KeyboardInterrupt`, the bank is closed and everything written is removed: the
@@ -266,11 +269,16 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
     """
     source = Path(source).resolve()
     frames = {region: read_legacy_region(source, region) for region in REGIONS}
+    n_valid = 0
     for region, frame in frames.items():
-        for row in np.flatnonzero(frame["validity"].to_numpy(dtype=float) >= 1.0):
+        valid_rows = np.flatnonzero(frame["validity"].to_numpy(dtype=float) >= 1.0)
+        n_valid += len(valid_rows)
+        for row in valid_rows:
             path = legacy_map_path(source, region, int(row))
             if not path.is_file():
                 raise FileNotFoundError(f"Missing map for valid {region} row {int(row)}: {path}")
+    if n_valid == 0:
+        raise ValueError(f"{source} has no valid rows in any region, so there are no maps to set bin edges.")
 
     destination = Path(destination)
     existed = destination.exists()
@@ -290,8 +298,10 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
                 if position == len(rows) or position % max(1, len(rows) // 10) == 0:
                     logger.info("%s: scanned %d/%d legacy maps", region, position, len(rows))
             bank._import_entries(region, entries)
-            minima.append(float(entries.loc[rows, "mag_min"].min()))
-            maxima.append(float(entries.loc[rows, "mag_max"].max()))
+            # A region without valid rows has no maps, so it adds nothing to the shared range.
+            if rows.size:
+                minima.append(float(entries.loc[rows, "mag_min"].min()))
+                maxima.append(float(entries.loc[rows, "mag_max"].max()))
         edges = bin_edges_from_range(min(minima), max(maxima), LEGACY_CONFIG.n_bin_edges)
         for region in REGIONS:
             bank._finalize_with_edges(region, edges)
