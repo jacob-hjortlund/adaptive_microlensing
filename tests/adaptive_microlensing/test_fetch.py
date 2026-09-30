@@ -69,6 +69,15 @@ def test_outside_hull_and_flagged_out_of_domain_queries_create(tetra_bank):
     assert tetra_bank.query(0.5, 0.499, 0.5, allow_outside_domain=True).status is QueryStatus.HIT
 
 
+def test_a_map_fetched_for_a_negative_shear_is_made_at_its_magnitude(tetra_bank):
+    """A flagged fetch at -gamma makes and stores the map at |gamma|, where later queries find it."""
+    kappa, gamma, s = CENTROID
+    fetched = tetra_bank.fetch(kappa, -gamma, s, allow_outside_domain=True)
+    assert fetched.status is FetchStatus.CREATED
+    assert (fetched.entry.kappa, fetched.entry.gamma, fetched.entry.s) == (kappa, gamma, s)
+    assert tetra_bank.query(kappa, gamma, s).entry == fetched.entry
+
+
 def test_invalid_simplex_creates_at_the_query_point(failing_bank, failing_generator):
     """A query in a tetrahedron with an invalid vertex creates a map at the query point."""
     result = failing_bank.fetch(*CENTROID, generator=failing_generator)

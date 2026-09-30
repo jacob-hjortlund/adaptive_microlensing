@@ -174,6 +174,18 @@ def test_allow_outside_domain_skips_only_the_domain_check(tetra_bank):
     assert tetra_bank.query(0.5, 0.5, 0.5, allow_outside_domain=True).status is QueryStatus.CRITICAL_LINE
 
 
+def test_a_negative_shear_is_looked_up_at_its_magnitude(tetra_bank):
+    """A negative gamma is outside the domain, but with the flag it is answered like |gamma|."""
+    kappa, gamma, s = NEAR_FIRST_VERTEX
+    assert tetra_bank.query(kappa, -gamma, s).status is QueryStatus.OUTSIDE_DOMAIN
+    mirrored = tetra_bank.query(kappa, -gamma, s, allow_outside_domain=True)
+    direct = tetra_bank.query(kappa, gamma, s)
+    assert mirrored.status is QueryStatus.HIT and not mirrored.is_in_bounds
+    assert mirrored.entry == direct.entry
+    assert mirrored.simplex_entry_ids == direct.simplex_entry_ids
+    assert mirrored.margin == direct.margin
+
+
 def test_invalid_vertices_give_invalid_simplex(failing_bank):
     """A tetrahedron with an invalid vertex gives invalid_simplex."""
     entries = failing_bank.entries("minima")

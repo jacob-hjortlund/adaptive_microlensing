@@ -701,7 +701,8 @@ class MapBank:
         allow_outside_domain : bool, optional
             If ``True``, skip the domain check (the kappa/gamma/s box and the cap on
             ``|mu_macro|``), so the point is looked up in its region's mesh wherever it
-            lies. Points on a critical line are still refused. Default is ``False``.
+            lies; a negative ``gamma``, which the box excludes, is looked up at
+            ``|gamma|``. Points on a critical line are still refused. Default is ``False``.
 
         Returns
         -------
@@ -739,8 +740,10 @@ class MapBank:
 
         Notes
         -----
-        The region is ``classify_image(kappa, gamma)``. A point within ``1e-12`` of an
-        entry in every coordinate is treated as that entry. Otherwise vertex *i* of the
+        The region is ``classify_image(kappa, gamma)``. The macro model depends only on
+        ``|gamma|``, since a negative shear only turns the shear axis, so the mesh is searched
+        at ``(kappa, |gamma|, s)``. A point within ``1e-12`` of an entry in every coordinate
+        is treated as that entry. Otherwise vertex *i* of the
         containing tetrahedron passes when the barycentric-weighted sum of the vertices'
         JS distances to *i* is at most ``max(q_query, q_i)``, where ``q_query`` is the
         barycentric interpolation of the vertices' intrinsic quantiles. Every vertex is
@@ -761,6 +764,9 @@ class MapBank:
         if not allow_outside_domain and not in_domain(k, g, s_value, domain):
             return QueryResult(QueryStatus.OUTSIDE_DOMAIN, region=region, is_in_bounds=box)
 
+        # The macro model depends only on |gamma|, as classify_image does: a negative shear
+        # only turns the shear axis, so the point is looked up at |gamma|.
+        lookup = np.array([k, abs(g), s_value])
         state = self._regions[region]
         index = state.index
         common: dict[str, Any] = {
@@ -771,7 +777,7 @@ class MapBank:
         if not state.finalized or not index.ready:
             return QueryResult(QueryStatus.REGION_NOT_READY, **common)
 
-        coincident = index.coincident(point)
+        coincident = index.coincident(lookup)
         if coincident is not None:
             if not index.valid[coincident]:
                 return QueryResult(QueryStatus.INVALID_SIMPLEX, coincident_entry_id=coincident, **common)
@@ -789,7 +795,7 @@ class MapBank:
                 **common,
             )
 
-        location = index.locate(point)
+        location = index.locate(lookup)
         if location is None:
             return QueryResult(QueryStatus.OUTSIDE_HULL, **common)
         common.update(
@@ -830,10 +836,11 @@ class MapBank:
         that is not ready) are refused here too, and a point at an existing invalid entry
         gets that entry's recorded failure without a retry. Otherwise, on a miss, outside
         the region's mesh or in a tetrahedron with an invalid vertex, the region must be
-        open for writing: the maps are made at the query point and committed as a new entry
-        with origin ``"fetch"`` before this method returns. Its MPD is computed on the
-        region's frozen bin edges, and the next query sees it. A failed map is committed
-        too, as an invalid entry, so the same point is not tried again.
+        open for writing: the maps are made at the query point, with ``|gamma|`` for
+        ``gamma``, and committed as a new entry with origin ``"fetch"`` before this method
+        returns. Its MPD is computed on the region's frozen bin edges, and the next query
+        sees it. A failed map is committed too, as an invalid entry, so the same point is
+        not tried again.
 
         Parameters
         ----------
@@ -849,7 +856,8 @@ class MapBank:
             and checked, only when a map has to be made.
         allow_outside_domain : bool, optional
             If ``True``, skip the domain check, as in :meth:`query`, so maps can also be
-            made outside the bank's domain. Default is ``False``.
+            made outside the bank's domain. For a negative ``gamma`` the map is made, and
+            stored, at ``|gamma|``. Default is ``False``.
 
         Returns
         -------
@@ -898,7 +906,7 @@ class MapBank:
             return FetchResult(FetchStatus.KNOWN_FAILURE, None, False, result, error or None)
         self._require_writable(region)
         pending = self._evaluate_entry(
-            region, (float(kappa), float(gamma), float(s)), self._resolve_generator(generator), "fetch"
+            region, (float(kappa), abs(float(gamma)), float(s)), self._resolve_generator(generator), "fetch"
         )
         self._commit(region, pending)
         if pending.valid:
