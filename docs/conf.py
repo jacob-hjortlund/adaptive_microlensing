@@ -49,6 +49,12 @@ html_show_sourcelink = False
 # Remove namespaces from class/method signatures
 add_module_names = False
 
+# Render numpydoc "Attributes" sections as field lists; as attribute directives they would
+# duplicate the attributes and enum members that autoapi documents itself.
+napoleon_use_ivar = True
+# Classes re-exported by the package are documented twice, so type references find two targets.
+suppress_warnings = ["ref.python"]
+
 autoapi_type = "python"
 autoapi_dirs = ["../src"]
 autoapi_ignore = ["*/__main__.py", "*/_version.py"]
