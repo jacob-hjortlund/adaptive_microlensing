@@ -1,5 +1,6 @@
 import importlib
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -213,6 +214,18 @@ def test_plot_entries_groups(patchy_bank, hue, labels):
     assert [text.get_text() for text in grid.legend.get_texts()] == labels
     assert grid.axes[2, 0].get_xlabel() == r"$\kappa$"
     assert grid.axes[2, 0].get_ylabel() == "$s$"
+
+
+def test_entries_of_an_origin_without_a_style_are_left_out_without_warnings(bank):
+    """An origin that has no style is not drawn, and grouping it raises no pandas deprecation."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point)
+    add_entry(bank, "minima", (0.2, 0.2, 0.5), origin="manual")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        grid = plotting.plot_entries(bank, regions="minima", hue="origin")
+    assert [text.get_text() for text in grid.legend.get_texts()] == ["build"]
+    assert grid.data["origin"].isna().tolist() == [False] * 4 + [True]
 
 
 def test_plot_entries_by_quantile_and_arguments(built_bank, patchy_bank):

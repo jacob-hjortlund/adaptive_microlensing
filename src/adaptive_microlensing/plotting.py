@@ -868,7 +868,10 @@ def _entry_groups(table: pd.DataFrame, hue: str) -> tuple[pd.Categorical, dict[s
             "Other": OTHER_STYLE,
         }
     present = {name: style for name, style in styles.items() if name in set(labels)}
-    return pd.Categorical(labels, categories=list(present)), present
+    # A label without a style becomes missing, which leaves its entries out of the plot.
+    known = pd.Series(labels, dtype=object)
+    known = known.where(known.isin(list(present)))
+    return pd.Categorical(known, categories=list(present)), present
 
 
 def _relabel(grid: Any) -> None:
