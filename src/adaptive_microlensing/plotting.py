@@ -35,7 +35,7 @@ except ImportError as exc:
 
 from .config import DomainSpec
 from .lensing import REGIONS
-from .slicing import CoverageGrid, axis_range, coverage_grid, slice_region
+from .slicing import AXES, CoverageGrid, axis_range, coverage_grid, slice_region
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -400,3 +400,114 @@ def plot_coverage(
                 )
         _legend(ax, patches)
     return ax
+
+
+def _entry_groups(table: pd.DataFrame, hue: str) -> tuple[pd.Categorical, dict[str, Style]]:
+    """The group of every entry and the style of each group present, in legend order."""
+    valid = table["valid"].to_numpy(dtype=bool)
+    if hue == "validity":
+        labels = np.where(valid, "valid", "invalid")
+        styles = VALIDITY_STYLE
+    elif hue == "origin":
+        labels = table["origin"].to_numpy(dtype=str)
+        styles = ORIGIN_STYLE
+    elif hue == "region":
+        labels = table["region"].to_numpy(dtype=str)
+        styles = REGION_STYLE
+    else:
+        errors = np.array([_error_kind(message) for message in table["error"].astype(str)], dtype=object)
+        counts = pd.Series(errors[~valid]).value_counts()
+        ranked = sorted(counts.index, key=lambda message: (-counts[message], message))
+        common = ranked[: len(ERROR_STYLE)]
+        labels = np.where(valid, "valid", np.where(np.isin(errors, common), errors, "Other"))
+        styles = {
+            "valid": VALIDITY_STYLE["valid"],
+            **dict(zip(common, ERROR_STYLE, strict=False)),
+            "Other": OTHER_STYLE,
+        }
+    present = {name: style for name, style in styles.items() if name in set(labels)}
+    return pd.Categorical(labels, categories=list(present)), present
+
+
+def _relabel(grid: Any) -> None:
+    for ax in grid.axes.flat:
+        if ax is not None:
+            ax.set_xlabel(_label(ax.get_xlabel()))
+            ax.set_ylabel(_label(ax.get_ylabel()))
+
+
+def plot_entries(bank: MapBank, *, regions: str | Iterable[str] = REGIONS, hue: str = "validity") -> Any:
+    """Corner pair plot of the entries in the kappa-gamma, kappa-s and gamma-s projections.
+
+    ``hue`` is ``"validity"``, ``"origin"``, ``"region"``, ``"error"`` or ``"quantile"``.
+    Returns the seaborn ``PairGrid``, which owns its figure.
+    """
+    if hue not in ("validity", "origin", "region", "error", "quantile"):
+        raise ValueError(f"hue must be validity, origin, region, error or quantile; got {hue!r}.")
+    names = _region_names(regions)
+    table = pd.concat([bank.entries(region).assign(region=region) for region in names], ignore_index=True)
+    if table.empty:
+        raise ValueError(f"Regions {names} have no entries.")
+    columns = list(AXES)
+    if hue == "quantile":
+        return _quantile_pairs(table, bank.config.variability.quantile)
+    groups, styles = _entry_groups(table, hue)
+    data = table[columns].assign(**{hue: groups})
+    grid = sns.pairplot(
+        data,
+        vars=columns,
+        hue=hue,
+        hue_order=list(styles),
+        palette={name: color for name, (color, _) in styles.items()},
+        markers={name: marker for name, (_, marker) in styles.items()},
+        corner=True,
+        diag_kind="hist",
+        plot_kws={"s": 14, "edgecolor": "white", "linewidth": 0.3},
+        diag_kws={"multiple": "stack", "element": "step"},
+    )
+    _relabel(grid)
+    return grid
+
+
+def _quantile_pairs(table: pd.DataFrame, quantile: float) -> Any:
+    valid = table["valid"].to_numpy(dtype=bool)
+    if not valid.any():
+        raise ValueError("There are no valid entries to colour by quantile.")
+    values = table["intrinsic_quantile"].to_numpy(dtype=float)
+    norm = mcolors.Normalize(float(values[valid].min()), float(values[valid].max()))
+    grid = sns.PairGrid(table, vars=list(AXES), corner=True)
+    grid.map_diag(sns.histplot, color=GREY, element="step")
+    for row in range(3):
+        for column in range(row):
+            ax = grid.axes[row, column]
+            x, y = table[AXES[column]].to_numpy(), table[AXES[row]].to_numpy()
+            ax.scatter(
+                x[valid],
+                y[valid],
+                c=values[valid],
+                cmap=QUANTILE_CMAP,
+                norm=norm,
+                s=14,
+                edgecolors="white",
+                linewidths=0.3,
+            )
+            if not valid.all():
+                ax.scatter(
+                    x[~valid],
+                    y[~valid],
+                    color=GREY,
+                    marker="X",
+                    s=14,
+                    edgecolors="white",
+                    linewidths=0.3,
+                    label="invalid",
+                )
+    if not valid.all():
+        grid.axes[1, 0].legend(loc="best", fontsize="small")
+    grid.figure.colorbar(
+        ScalarMappable(norm=norm, cmap=QUANTILE_CMAP),
+        ax=[ax for ax in grid.axes.flat if ax is not None],
+        label=f"{quantile:.0%} quantile of the MPD distance",
+    )
+    _relabel(grid)
+    return grid

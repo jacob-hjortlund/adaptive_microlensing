@@ -193,3 +193,34 @@ def test_plot_coverage_arguments(built_bank):
         plotting.plot_coverage(grid=grid, s=0.5)
     with pytest.raises(ValueError, match="color"):
         plotting.plot_coverage(grid=grid, color="quantile")
+
+
+@pytest.mark.parametrize(
+    ("hue", "labels"),
+    [
+        ("validity", ["valid", "invalid"]),
+        ("error", ["valid", "MapGenerationError: Synthetic failure."]),
+        ("region", ["minima", "saddle"]),
+        ("origin", ["build"]),
+    ],
+)
+def test_plot_entries_groups(patchy_bank, hue, labels):
+    """The pair plot's legend lists the groups present, in the fixed order."""
+    grid = plotting.plot_entries(patchy_bank, hue=hue)
+    assert isinstance(grid, sns.PairGrid)
+    assert [text.get_text() for text in grid.legend.get_texts()] == labels
+    assert grid.axes[2, 0].get_xlabel() == r"$\kappa$"
+    assert grid.axes[2, 0].get_ylabel() == "$s$"
+
+
+def test_plot_entries_by_quantile_and_arguments(built_bank, patchy_bank):
+    """Quantile hue adds a colourbar; unknown hues and regions without entries raise."""
+    grid = plotting.plot_entries(patchy_bank, hue="quantile")
+    assert grid.figure.axes[-1].get_ylabel() == QUANTILE_LABEL
+    assert "invalid" in _legend_labels(grid.axes[1, 0])
+    grid = plotting.plot_entries(built_bank, hue="error")
+    assert [text.get_text() for text in grid.legend.get_texts()] == ["valid"]
+    with pytest.raises(ValueError, match="hue"):
+        plotting.plot_entries(built_bank, hue="seed")
+    with pytest.raises(ValueError, match="no entries"):
+        plotting.plot_entries(patchy_bank, regions=["maxima"])
