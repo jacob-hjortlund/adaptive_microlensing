@@ -1,4 +1,5 @@
 import math
+import os
 
 import numpy as np
 import pandas as pd
@@ -129,4 +130,15 @@ def test_region_lock_release_is_idempotent(tmp_path):
     other = RegionLock(tmp_path / ".lock")
     other.acquire()
     assert "pid=" in (tmp_path / ".lock").read_text()
+    other.release()
+
+
+def test_a_lock_whose_descriptor_was_closed_elsewhere_can_be_taken_again(tmp_path):
+    """Releasing a lock whose file descriptor is already closed still frees it for this process."""
+    lock = RegionLock(tmp_path / ".lock")
+    lock.acquire()
+    os.close(lock._fd)  # as os.closerange or a daemonising library would
+    lock.release()
+    other = RegionLock(tmp_path / ".lock")
+    other.acquire()
     other.release()

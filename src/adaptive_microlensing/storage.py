@@ -59,6 +59,7 @@ checks the consistency of the files; the maps and MPDs are computed elsewhere.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import errno
 import fcntl
@@ -699,9 +700,9 @@ def _release_lock(fd: int, key: Path) -> None:
     It is the ``weakref.finalize`` callback of a :class:`RegionLock`, so it runs at most
     once per acquisition: from :meth:`RegionLock.release`, when the lock object is
     garbage-collected, or at interpreter exit, whichever comes first. An ``OSError`` from
-    the unlock is ignored, and the fd is closed and the key forgotten even then. An error
-    from closing the fd itself propagates, for example when the fd is already closed, and
-    the key then stays in the registry of held locks.
+    the unlock or the close is ignored: a descriptor that was already closed elsewhere
+    released its lock when it was closed. The key is forgotten in every case, so the
+    region can be locked again.
 
     Parameters
     ----------
@@ -712,11 +713,12 @@ def _release_lock(fd: int, key: Path) -> None:
         process.
     """
     try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        # Closing a descriptor that was already closed fails, but that close released the lock.
+        with contextlib.suppress(OSError):
+            os.close(fd)
     finally:
-        os.close(fd)
         _HELD_LOCKS.discard(key)
 
 
