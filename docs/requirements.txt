@@ -2,8 +2,10 @@
 ipykernel
 ipython
 jupytext
+matplotlib
 nbconvert
 nbsphinx
+seaborn
 sphinx
 sphinx-autoapi
 sphinx-copybutton

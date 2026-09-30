@@ -27,6 +27,7 @@ From a clone of this repository:
 ```
 >> pip install .           # build, load and query banks
 >> pip install '.[ipm]'    # also make maps on a GPU with the microlensing package
+>> pip install '.[plot]'   # also draw figures with matplotlib and seaborn
 ```
 
 ## Usage
@@ -65,6 +66,21 @@ bank = import_legacy_bank("adaptive_mpd/smooth_frac_range_output", "legacy_bank/
 
 Progress is reported through the `adaptive_microlensing` logger; call
 `logging.basicConfig(level=logging.INFO)` to see it.
+
+## Figures
+
+With the `plot` extra, `adaptive_microlensing.plotting` draws a bank's mesh, where it answers
+queries, query tables and build convergence, in colourblind-safe palettes:
+
+```python
+from adaptive_microlensing import plotting
+
+plotting.plot_slice(bank, s=0.5)                     # interpolated quantile on a plane
+plotting.plot_coverage(bank, s=0.5, color="margin")  # the hit rule on a grid in that plane
+```
+
+Every function takes an optional `ax` and leaves matplotlib's global settings alone, so
+figures can be combined into multi-panel figures in your own style.
 
 ## Bank layout
 
