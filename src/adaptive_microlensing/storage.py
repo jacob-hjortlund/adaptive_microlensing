@@ -178,18 +178,22 @@ def _atomic_replace(path: Path, write: Callable[[IO[bytes]], object]) -> None:
 
     Notes
     -----
-    If ``write``, the flush or the fsync raises, ``path`` is unchanged and the temporary
-    file is left behind; the next write to ``path`` overwrites it. The temporary name is
+    If ``write``, the flush, the fsync or the rename raises, ``path`` is unchanged, the
+    temporary file is removed and the error propagates. The temporary name is
     fixed, so two writers must never write the same ``path`` at once; within a region,
     :class:`RegionLock` ensures this. The directory is not fsynced after the rename.
     """
     path = Path(path)
     temporary = path.with_name(f".{path.name}.tmp")
-    with open(temporary, "wb") as stream:
-        write(stream)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    try:
+        with open(temporary, "wb") as stream:
+            write(stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:

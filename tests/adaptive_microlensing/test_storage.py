@@ -10,6 +10,7 @@ from adaptive_microlensing.storage import (
     RegionLock,
     RegionStore,
     append_entry,
+    atomic_save_array,
     atomic_write_json,
     empty_entries,
     normalise_entries,
@@ -98,6 +99,16 @@ def test_atomic_writes_leave_no_temporary_files(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["payload.json"]
     with pytest.raises(BankCorruptError, match="Missing"):
         read_json(tmp_path / "absent.json")
+
+
+def test_a_failed_atomic_write_leaves_the_file_and_no_temporary_file(tmp_path):
+    """A write that fails part-way keeps the old file and removes its temporary file."""
+    path = tmp_path / "array.npy"
+    atomic_save_array(path, np.arange(3.0))
+    with pytest.raises(ValueError, match="pickle"):
+        atomic_save_array(path, np.array([{"a": 1}], dtype=object))
+    np.testing.assert_array_equal(np.load(path), [0.0, 1.0, 2.0])
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["array.npy"]
 
 
 def test_region_store_snapshot_rules(tmp_path):
