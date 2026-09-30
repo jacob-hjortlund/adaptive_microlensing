@@ -32,15 +32,21 @@ dependencies = [
 ipm = [
     "microlensing>=0.1.7", # GPU map generation with IPM
 ]
+plot = [
+    "matplotlib>=3.8", # Figures of meshes, coverage, queries and builds
+    "seaborn>=0.13", # Colourblind palettes and pair plots
+]
 dev = [
     "asv[virtualenv]==0.6.5", # Used to compute performance benchmarks
     "black", # Used for static linting of files
     "jupyter", # Clears output from Jupyter notebooks
+    "matplotlib>=3.8", # Runs the plotting tests
     "mypy", # Used for static type checking of files
     "pre-commit", # Used to run checks before finalizing a git commit
     "pytest",
     "pytest-cov", # Used to report total code coverage
     "ruff", # Used for static linting of files
+    "seaborn>=0.13", # Runs the plotting tests
 ]
 
 [build-system]
