@@ -408,3 +408,17 @@ def test_every_non_empty_bin_keeps_a_visible_interval():
                 span.x0 <= edges[i] + 1e-12 and span.x1 >= edges[i + 1] - 1e-12 and span.height > 0
                 for span in spans
             ), (line.get_label(), i)
+
+
+def test_the_stop_line_counts_every_valid_entry_like_the_build(bank):
+    """After fetches extend a region, the max-valid-points line sits where a build would stop."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point)
+    for point in ((0.2, 0.2, 0.5), (0.3, 0.1, 0.4), (0.15, 0.25, 0.6)):
+        add_entry(bank, "minima", point, origin="fetch")
+    for point in ((0.25, 0.15, 0.3), (0.2, 0.3, 0.7)):
+        add_entry(bank, "minima", point)
+    figure = plotting.plot_build(bank, "minima", stop=StoppingCriteria(max_valid_points=8))
+    for ax in figure.axes:
+        marks = [line for line in ax.lines if line.get_label() == "max valid points"]
+        assert [line.get_xdata()[0] for line in marks] == [7]

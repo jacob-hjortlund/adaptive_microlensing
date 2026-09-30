@@ -721,10 +721,12 @@ def plot_build(
         if stop.residual_goal is not None:
             residual_ax.axhline(stop.residual_goal, **goal)
         if stop.max_valid_points is not None:
-            reached = np.flatnonzero(np.cumsum(valid) >= stop.max_valid_points)
+            # A build stops on the valid entries of the whole region, fetched ones included.
+            reached = np.flatnonzero(np.cumsum(table["valid"].to_numpy(dtype=bool)) >= stop.max_valid_points)
             if reached.size:
+                stop_entry = table["entry_id"].iloc[reached[0]]
                 for panel in panels:
-                    panel.axvline(entry[reached[0]], **{**goal, "label": "max valid points"})
+                    panel.axvline(stop_entry, **{**goal, "label": "max valid points"})
     for panel in panels:
         if panel.get_legend_handles_labels()[1]:
             _legend(panel)
