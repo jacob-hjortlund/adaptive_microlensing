@@ -3,6 +3,7 @@ import sys
 
 import numpy as np
 import pytest
+from adaptive_microlensing import coverage_grid
 
 matplotlib = pytest.importorskip("matplotlib")
 sns = pytest.importorskip("seaborn")
@@ -141,3 +142,54 @@ def test_plot_slice_options_and_orientations(built_bank):
         plotting.plot_slice(built_bank, s=0.5, regions=[])
     with pytest.raises(ValueError, match="regions"):
         plotting.plot_slice(built_bank, s=0.5, regions=["ridge"])
+
+
+def test_plot_coverage_by_status(patchy_bank):
+    """Statuses are listed with their shares, and unfinalized regions are hatched."""
+    grid = coverage_grid(patchy_bank, s=0.5, n=30)
+    ax = plotting.plot_coverage(grid=grid)
+    labels = _legend_labels(ax)
+    assert any(label.startswith("hit (") for label in labels)
+    assert any(label.startswith("region not ready (") for label in labels)
+    assert all(label.endswith("%)") for label in labels if label not in (INFINITE, FINITE))
+    hatches = [list(getattr(collection, "hatches", None) or []) for collection in ax.collections]
+    assert ["///"] in hatches
+    patches = [
+        handle for handle in ax.get_legend().legend_handles if handle.get_label().startswith("region not")
+    ]
+    assert [patch.get_hatch() for patch in patches] == ["///"]
+    assert ax.get_title() == "$s = 0.5$"
+
+
+def test_plot_coverage_by_margin_and_from_a_bank(built_bank, patchy_bank):
+    """Margin mode colours hits and misses with a centred colourbar; a bank computes its own grid."""
+    grid = coverage_grid(patchy_bank, s=0.5, n=20)
+    ax = plotting.plot_coverage(grid=grid, color="margin")
+    assert ax.figure.axes[-1].get_ylabel() == plotting.MARGIN_LABEL
+    labels = _legend_labels(ax)
+    assert not any(label.startswith(("hit (", "miss (")) for label in labels)
+    ax = plotting.plot_coverage(built_bank, kappa=0.4, n=10)
+    assert (ax.get_xlabel(), ax.get_ylabel()) == (r"$\gamma$", "$s$")
+
+
+def test_figures_compose_into_one_paper_figure(patchy_bank):
+    """A slice and a coverage map share one figure, each with its own colourbar."""
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    plotting.plot_slice(patchy_bank, s=0.5, ax=left)
+    plotting.plot_coverage(patchy_bank, s=0.5, n=10, color="margin", ax=right)
+    assert len(figure.axes) == 4
+    assert figure.axes[2].get_ylabel() == QUANTILE_LABEL
+    assert figure.axes[3].get_ylabel() == plotting.MARGIN_LABEL
+
+
+def test_plot_coverage_arguments(built_bank):
+    """Exactly one of bank and grid; a grid fixes the plane; color is status or margin."""
+    grid = coverage_grid(built_bank, s=0.5, n=5)
+    with pytest.raises(ValueError, match="either bank"):
+        plotting.plot_coverage()
+    with pytest.raises(ValueError, match="either bank"):
+        plotting.plot_coverage(built_bank, grid=grid)
+    with pytest.raises(ValueError, match="already fixes the plane"):
+        plotting.plot_coverage(grid=grid, s=0.5)
+    with pytest.raises(ValueError, match="color"):
+        plotting.plot_coverage(grid=grid, color="quantile")

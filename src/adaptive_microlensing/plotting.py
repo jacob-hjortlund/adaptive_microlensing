@@ -25,6 +25,7 @@ try:
     from matplotlib import colors as mcolors
     from matplotlib.cm import ScalarMappable
     from matplotlib.collections import PolyCollection
+    from matplotlib.patches import Patch
     from matplotlib.tri import Triangulation
 except ImportError as exc:
     raise ImportError(
@@ -34,7 +35,7 @@ except ImportError as exc:
 
 from .config import DomainSpec
 from .lensing import REGIONS
-from .slicing import axis_range, slice_region
+from .slicing import CoverageGrid, axis_range, coverage_grid, slice_region
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -301,4 +302,101 @@ def plot_slice(
         )
     if legend:
         _legend(ax)
+    return ax
+
+
+def plot_coverage(
+    bank: MapBank | None = None,
+    *,
+    s: float | None = None,
+    kappa: float | None = None,
+    gamma: float | None = None,
+    n: int = 200,
+    grid: CoverageGrid | None = None,
+    color: str = "status",
+    ax: Axes | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    curves: bool = True,
+    legend: bool = True,
+    colorbar: bool = True,
+) -> Axes:
+    """Draw where the bank answers queries on a plane: the hit-rule status or margin of every grid node.
+
+    Give either ``bank`` with a plane, or a ``grid`` from ``coverage_grid``.
+    """
+    if (bank is None) == (grid is None):
+        raise ValueError("Give either bank (with s, kappa or gamma) or a precomputed grid.")
+    if color not in ("status", "margin"):
+        raise ValueError(f"color must be 'status' or 'margin', got {color!r}.")
+    if grid is None:
+        assert bank is not None
+        grid = coverage_grid(bank, s=s, kappa=kappa, gamma=gamma, n=n)
+    elif any(value is not None for value in (s, kappa, gamma)):
+        raise ValueError("A precomputed grid already fixes the plane; drop s, kappa and gamma.")
+
+    ax = _axes(ax)
+    status = _status_groups(grid.status)
+    covered = np.isin(status, ("hit", "miss"))
+    names = [name for name in STATUS_STYLE if name != "outside_domain"]
+    codes = np.full(status.shape, np.nan)
+    for code, name in enumerate(names):
+        codes[status == name] = code
+    if color == "margin":
+        codes[covered] = np.nan
+    ax.pcolormesh(
+        grid.x,
+        grid.y,
+        np.ma.masked_invalid(codes),
+        cmap=mcolors.ListedColormap([STATUS_STYLE[name][0] for name in names]),
+        norm=mcolors.BoundaryNorm(np.arange(len(names) + 1) - 0.5, len(names)),
+        shading="nearest",
+        rasterized=True,
+        zorder=1,
+    )
+    not_ready = status == "region_not_ready"
+    if not_ready.any():
+        hatching = ax.contourf(
+            grid.x,
+            grid.y,
+            not_ready.astype(float),
+            levels=[0.5, 1.5],
+            colors="none",
+            hatches=[_HATCH],
+            zorder=2,
+        )
+        hatching.set_edgecolor(DARK_GREY)
+        hatching.set_linewidth(0.0)
+    if color == "margin":
+        margins = np.where(covered, grid.margin, np.nan)
+        mesh = ax.pcolormesh(
+            grid.x,
+            grid.y,
+            np.ma.masked_invalid(margins),
+            cmap=MARGIN_CMAP,
+            norm=_margin_norm(margins[covered], vmin, vmax),
+            shading="nearest",
+            rasterized=True,
+            zorder=1,
+        )
+        if colorbar:
+            ax.figure.colorbar(mesh, ax=ax, pad=0.02, label=MARGIN_LABEL)
+
+    if curves:
+        _critical_curves(ax, grid.domain, grid.axis, grid.value)
+    _frame(ax, grid.domain, grid.axis, grid.value, grid.plane_axes)
+    if legend:
+        inside = int((status != "outside_domain").sum())
+        patches = []
+        for name in names:
+            count = int((status == name).sum())
+            if count and not (color == "margin" and name in ("hit", "miss")):
+                patches.append(
+                    Patch(
+                        facecolor=STATUS_STYLE[name][0],
+                        hatch=_HATCH if name == "region_not_ready" else None,
+                        label=f"{_status_label(name)} ({_share(count, inside)})",
+                    )
+                )
+        _legend(ax, patches)
     return ax
