@@ -50,6 +50,19 @@ def test_hit_summary(tetra_bank):
     assert np.isnan(summary.loc["maxima", "hit_rate"])
 
 
+def test_hit_summary_counts_only_true_hit_flags(tetra_bank):
+    """A NaN is_hit, as a left merge leaves on rows that were never queried, is not a hit."""
+    unqueried = pd.DataFrame(
+        {"query_region": [None, "minima"], "interpolation_status": [np.nan, np.nan], "is_hit": [np.nan] * 2}
+    )
+    table = pd.concat([tetra_bank.query_many(batch_table()), unqueried], ignore_index=True)
+    summary = hit_summary(table)
+    assert summary.loc["all", "queries"] == 8
+    assert summary.loc["all", "hits"] == 1
+    assert summary.loc["minima", "hits"] == 1
+    assert summary.loc["minima", "hit_rate"] == pytest.approx(1 / 5)
+
+
 def test_summary(tetra_bank):
     """summary() counts entries per region."""
     summary = tetra_bank.summary()

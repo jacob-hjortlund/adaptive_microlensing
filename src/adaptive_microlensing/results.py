@@ -586,9 +586,8 @@ def hit_summary(table: pd.DataFrame) -> pd.DataFrame:
     A query is covered when the hit rule ran on it, that is when its
     ``interpolation_status`` is ``"hit"`` or ``"miss"``. For ``fetch_many`` output the
     counts describe the queries before any map was made, so a created map counts as a
-    miss. ``is_hit`` is cast with ``astype(bool)``, so a NaN flag, as a left merge leaves on
-    rows that were never queried, would count as a hit; the flags in tables straight from
-    ``query_many`` and ``fetch_many`` are never missing.
+    miss. Only rows whose ``is_hit`` is ``True`` count as hits; ``False`` and missing
+    values, as a left merge leaves on rows that were never queried, do not.
 
     Parameters
     ----------
@@ -615,7 +614,8 @@ def hit_summary(table: pd.DataFrame) -> pd.DataFrame:
         If ``table`` lacks one of the three columns it reads.
     """
     covered = table["interpolation_status"].isin([QueryStatus.HIT.value, QueryStatus.MISS.value])
-    hits = table["is_hit"].astype(bool)
+    # Only a true flag is a hit: NaN, as a merge leaves on rows never queried, would cast to True.
+    hits = table["is_hit"].eq(True).fillna(False).astype(bool)
     masks = [(region, table["query_region"].eq(region)) for region in REGIONS]
     masks.append(("all", pd.Series(True, index=table.index)))
     records = []
