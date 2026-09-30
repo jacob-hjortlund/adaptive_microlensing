@@ -23,6 +23,9 @@ try:
     import matplotlib.pyplot as plt
     import seaborn as sns
     from matplotlib import colors as mcolors
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.collections import PolyCollection
+    from matplotlib.tri import Triangulation
 except ImportError as exc:
     raise ImportError(
         "adaptive_microlensing.plotting needs matplotlib and seaborn; install them with "
@@ -31,10 +34,12 @@ except ImportError as exc:
 
 from .config import DomainSpec
 from .lensing import REGIONS
-from .slicing import axis_range
+from .slicing import axis_range, slice_region
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+
+    from .bank import MapBank
 
 Style = tuple[str, str]
 
@@ -193,3 +198,107 @@ def _frame(ax: Axes, domain: DomainSpec, axis: str, value: float, plane_axes: tu
     ax.set_title(f"${_TEX[axis]} = {value:g}$")
     if axis == "s":
         ax.set_aspect("equal", adjustable="box")
+
+
+def plot_slice(
+    bank: MapBank,
+    *,
+    s: float | None = None,
+    kappa: float | None = None,
+    gamma: float | None = None,
+    regions: str | Iterable[str] = REGIONS,
+    ax: Axes | None = None,
+    cmap: str = QUANTILE_CMAP,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    mesh: bool = True,
+    entries: bool = True,
+    entry_tolerance: float | None = None,
+    curves: bool = True,
+    colorbar: bool = True,
+    legend: bool = True,
+) -> Axes:
+    """Draw the interpolated MPD-distance quantile of each region on a plane through the bank's mesh.
+
+    Cells of tetrahedra with an invalid vertex are grey. Entries within ``entry_tolerance``
+    of the plane (2 % of that axis's domain range by default) are drawn as markers.
+    """
+    slices = [slice_region(bank, region, s=s, kappa=kappa, gamma=gamma) for region in _region_names(regions)]
+    domain = bank.config.domain
+    axis, value, plane_axes = slices[0].axis, slices[0].value, slices[0].plane_axes
+    shown = [piece.quantiles[np.unique(piece.triangles[piece.valid])] for piece in slices]
+    values = np.concatenate(shown)
+    values = values[np.isfinite(values)]
+    low = vmin if vmin is not None else (float(values.min()) if values.size else 0.0)
+    high = vmax if vmax is not None else (float(values.max()) if values.size else 1.0)
+    if low > high:
+        raise ValueError(f"Expected vmin <= vmax, got {low} and {high}.")
+    if math.isclose(low, high):
+        delta = max(1e-12, 0.01 * max(abs(low), 1.0))
+        low, high = low - delta, high + delta
+    norm = mcolors.Normalize(low, high)
+
+    ax = _axes(ax)
+    for piece in slices:
+        if len(piece.triangles) == 0:
+            continue
+        x, y = piece.points[:, 0], piece.points[:, 1]
+        if piece.valid.any():
+            # Gouraud shading is linear inside each triangle, like the bank's interpolation.
+            # Points used only by invalid cells carry NaN; give them a finite placeholder.
+            quantiles = np.where(np.isfinite(piece.quantiles), piece.quantiles, low)
+            ax.tripcolor(
+                Triangulation(x, y, piece.triangles[piece.valid]),
+                quantiles,
+                shading="gouraud",
+                cmap=cmap,
+                norm=norm,
+                rasterized=True,
+                zorder=1,
+            )
+        if not piece.valid.all():
+            ax.add_collection(
+                PolyCollection(
+                    piece.points[piece.triangles[~piece.valid]],
+                    facecolors=mcolors.to_rgba(GREY, 0.35),
+                    edgecolors=GREY,
+                    linewidths=0.5,
+                    zorder=1,
+                )
+            )
+        if mesh:
+            ax.triplot(Triangulation(x, y, piece.triangles), color="k", lw=0.3, alpha=0.4, zorder=2)
+
+    if entries:
+        lower, upper = axis_range(domain, axis)
+        tolerance = 0.02 * (upper - lower) if entry_tolerance is None else float(entry_tolerance)
+        for piece in slices:
+            table = bank.entries(piece.region)
+            near = table[(table[axis] - value).abs() <= tolerance]
+            for name, (color, marker) in VALIDITY_STYLE.items():
+                rows = near[near["valid"] == (name == "valid")]
+                if len(rows):
+                    ax.scatter(
+                        rows[plane_axes[0]],
+                        rows[plane_axes[1]],
+                        color=color,
+                        marker=marker,
+                        s=18,
+                        edgecolors="white",
+                        linewidths=0.5,
+                        zorder=4,
+                        label=f"{name} entry",
+                    )
+    if curves:
+        _critical_curves(ax, domain, axis, value)
+    _frame(ax, domain, axis, value, plane_axes)
+    if colorbar:
+        ax.figure.colorbar(
+            ScalarMappable(norm=norm, cmap=cmap),
+            ax=ax,
+            pad=0.02,
+            label=f"{bank.config.variability.quantile:.0%} quantile of the MPD distance",
+        )
+    if legend:
+        _legend(ax)
+    return ax

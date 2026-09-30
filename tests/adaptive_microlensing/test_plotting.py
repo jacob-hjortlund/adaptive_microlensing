@@ -104,3 +104,40 @@ def test_error_kinds_group_by_cause():
     for message, kind in cases.items():
         assert plotting._error_kind(message) == kind
     assert len(plotting._error_kind("x" * 200)) <= 60
+
+
+def _legend_labels(ax):
+    legend = ax.get_legend()
+    return [] if legend is None else [text.get_text() for text in legend.get_texts()]
+
+
+def test_plot_slice_draws_every_layer(patchy_bank):
+    """Shaded valid cells, grey invalid cells, mesh, entries, curves, colourbar and legend."""
+    ax = plt.figure().add_subplot()
+    assert plotting.plot_slice(patchy_bank, s=0.5, ax=ax, entry_tolerance=1.0) is ax
+    kinds = {type(artist).__name__ for artist in ax.collections}
+    assert {"TriMesh", "PolyCollection", "PathCollection"} <= kinds
+    assert ax.get_title() == "$s = 0.5$"
+    assert (ax.get_xlabel(), ax.get_ylabel()) == (r"$\kappa$", r"$\gamma$")
+    assert ax.get_xlim() == patchy_bank.config.domain.kappa_range
+    assert ax.get_aspect() == 1.0
+    assert set(_legend_labels(ax)) == {"valid entry", "invalid entry", INFINITE, FINITE}
+    assert ax.figure.axes[-1].get_ylabel() == QUANTILE_LABEL
+
+
+def test_plot_slice_options_and_orientations(built_bank):
+    """Layers can be switched off; kappa slices put gamma and s on the axes."""
+    ax = plotting.plot_slice(
+        built_bank, kappa=0.4, mesh=False, entries=False, curves=False, colorbar=False, legend=False
+    )
+    assert ax.get_title() == r"$\kappa = 0.4$"
+    assert (ax.get_xlabel(), ax.get_ylabel()) == (r"$\gamma$", "$s$")
+    assert ax.get_aspect() == "auto"
+    assert ax.get_legend() is None and len(ax.lines) == 0 and len(ax.figure.axes) == 1
+    plotting.plot_slice(built_bank, gamma=0.3, regions="saddle", vmin=0.0, vmax=1.0)
+    with pytest.raises(ValueError, match="vmin <= vmax"):
+        plotting.plot_slice(built_bank, s=0.5, vmin=1.0, vmax=0.0)
+    with pytest.raises(ValueError, match="regions"):
+        plotting.plot_slice(built_bank, s=0.5, regions=[])
+    with pytest.raises(ValueError, match="regions"):
+        plotting.plot_slice(built_bank, s=0.5, regions=["ridge"])
