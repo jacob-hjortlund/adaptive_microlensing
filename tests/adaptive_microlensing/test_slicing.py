@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from adaptive_microlensing import MapBank, slice_region
+from adaptive_microlensing import MapBank, coverage_grid, slice_region
 from adaptive_microlensing.lensing import REGIONS, region_hull, region_hull_vertices
 from adaptive_microlensing.slicing import AXES
 from helpers import TETRAHEDRON, add_entry, small_config
@@ -156,6 +156,8 @@ def test_plane_arguments_are_validated(tetra_bank, plane, message):
     """Slices and grids need exactly one plane coordinate inside the domain."""
     with pytest.raises(ValueError, match=message):
         slice_region(tetra_bank, "minima", **plane)
+    with pytest.raises(ValueError, match=message):
+        coverage_grid(tetra_bank, **plane)
 
 
 def test_unknown_region(tetra_bank):
@@ -168,3 +170,41 @@ def test_a_plane_that_misses_a_region_gives_an_empty_slice(built_bank):
     """kappa = 0.3 lies in minima and saddle only, so the maxima slice is empty."""
     piece = slice_region(built_bank, "maxima", kappa=0.3)
     assert piece.points.shape == (0, 2) and piece.triangles.shape == (0, 3)
+
+
+def test_grid_size_is_validated(tetra_bank):
+    """A grid size below 2 or not an integer raises ValueError."""
+    for n in (1, 2.5, True):
+        with pytest.raises(ValueError, match="n must be an integer"):
+            coverage_grid(tetra_bank, s=0.5, n=n)
+
+
+def test_coverage_grid_agrees_with_query(patchy_bank):
+    """Every grid node carries exactly what bank.query returns at that point."""
+    domain = patchy_bank.config.domain
+    grid = coverage_grid(patchy_bank, s=0.5, n=15)
+    assert (grid.axis, grid.value, grid.plane_axes) == ("s", 0.5, ("kappa", "gamma"))
+    assert grid.domain == domain
+    np.testing.assert_allclose(grid.x, np.linspace(*domain.kappa_range, 15))
+    np.testing.assert_allclose(grid.y, np.linspace(*domain.gamma_range, 15))
+    assert grid.status.shape == grid.region.shape == grid.margin.shape == (15, 15)
+    assert len(grid.table) == 225
+    for iy, y in enumerate(grid.y):
+        for ix, x in enumerate(grid.x):
+            result = patchy_bank.query(x, y, 0.5)
+            assert grid.status[iy, ix] == result.status.value
+            assert grid.region[iy, ix] == result.region
+            assert grid.is_hit[iy, ix] == result.is_hit
+            np.testing.assert_equal(grid.margin[iy, ix], result.margin)
+            np.testing.assert_equal(grid.interpolated_distance[iy, ix], result.interpolated_distance)
+    assert {"hit", "region_not_ready", "outside_domain"} <= set(grid.status.ravel())
+
+
+def test_coverage_grid_in_a_kappa_plane(built_bank):
+    """A kappa plane spans gamma and s; nodes on a critical line have no region."""
+    grid = coverage_grid(built_bank, kappa=0.5, n=40)
+    assert grid.plane_axes == ("gamma", "s")
+    np.testing.assert_allclose(grid.table["kappa"], 0.5)
+    critical = grid.status == "critical_line"
+    assert critical.any()
+    assert all(region is None for region in grid.region[critical])

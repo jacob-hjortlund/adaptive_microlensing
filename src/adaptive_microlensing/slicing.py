@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 
 from .config import DomainSpec
 
 if TYPE_CHECKING:
     from .bank import MapBank
+
+logger = logging.getLogger("adaptive_microlensing")
 
 AXES = ("kappa", "gamma", "s")
 #: A vertex within this fraction of the domain's axis range from the plane lies on it.
@@ -176,4 +180,64 @@ def slice_region(
         quantiles=crossing_q[used],
         valid=np.all(index.valid[simplices[simplex_index]], axis=1),
         simplex_index=simplex_index,
+    )
+
+
+@dataclass(frozen=True)
+class CoverageGrid:
+    """The hit rule evaluated by ``MapBank.query_many`` on an n x n grid in a plane.
+
+    The 2D arrays are indexed ``[iy, ix]``, with ``x`` along ``plane_axes[0]`` and ``y``
+    along ``plane_axes[1]``.
+    """
+
+    axis: str
+    value: float
+    plane_axes: tuple[str, str]
+    domain: DomainSpec
+    x: np.ndarray
+    y: np.ndarray
+    status: np.ndarray
+    region: np.ndarray
+    is_hit: np.ndarray
+    margin: np.ndarray
+    interpolated_distance: np.ndarray
+    table: pd.DataFrame
+
+
+def coverage_grid(
+    bank: MapBank,
+    *,
+    s: float | None = None,
+    kappa: float | None = None,
+    gamma: float | None = None,
+    n: int = 200,
+) -> CoverageGrid:
+    """Query an n x n grid over the domain box in the plane given by exactly one of s, kappa or gamma."""
+    domain = bank.config.domain
+    axis, value, plane_axes = resolve_plane(domain, s=s, kappa=kappa, gamma=gamma)
+    if isinstance(n, bool) or not isinstance(n, int | np.integer) or n < 2:
+        raise ValueError(f"n must be an integer >= 2, got {n!r}.")
+    x = np.linspace(*axis_range(domain, plane_axes[0]), int(n))
+    y = np.linspace(*axis_range(domain, plane_axes[1]), int(n))
+    xx, yy = np.meshgrid(x, y)
+    nodes = pd.DataFrame({plane_axes[0]: xx.ravel(), plane_axes[1]: yy.ravel()})
+    nodes[axis] = value
+    logger.info("Coverage grid: %d queries at %s = %g", len(nodes), axis, value)
+    table = bank.query_many(nodes)
+    shape = xx.shape
+    region = table["query_region"].astype(object)
+    return CoverageGrid(
+        axis=axis,
+        value=value,
+        plane_axes=plane_axes,
+        domain=domain,
+        x=x,
+        y=y,
+        status=table["interpolation_status"].to_numpy(dtype=str).reshape(shape),
+        region=region.where(region.notna(), None).to_numpy(dtype=object).reshape(shape),
+        is_hit=table["is_hit"].to_numpy(dtype=bool).reshape(shape),
+        margin=table["distance_margin"].to_numpy(dtype=float).reshape(shape),
+        interpolated_distance=table["interpolated_mpd_distance"].to_numpy(dtype=float).reshape(shape),
+        table=table,
     )

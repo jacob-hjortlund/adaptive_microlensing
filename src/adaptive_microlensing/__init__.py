@@ -37,7 +37,7 @@ from .results import (
     QueryStatus,
     hit_summary,
 )
-from .slicing import RegionSlice, slice_region
+from .slicing import CoverageGrid, RegionSlice, coverage_grid, slice_region
 from .synthetic import SyntheticGenerator
 
 __all__ = [
@@ -48,6 +48,7 @@ __all__ = [
     "BankLockedError",
     "BankReadOnlyError",
     "BuildSummary",
+    "CoverageGrid",
     "DesignSpec",
     "DomainSpec",
     "FetchResult",
@@ -68,6 +69,7 @@ __all__ = [
     "SyntheticGenerator",
     "VariabilitySpec",
     "__version__",
+    "coverage_grid",
     "generator_from_spec",
     "hit_summary",
     "import_legacy_bank",
