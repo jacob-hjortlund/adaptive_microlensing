@@ -657,7 +657,15 @@ def plot_hit_rate(
             rate = hit_counts / counts
         low, high = _wilson(hit_counts, counts, z)
         ax.plot(centres, rate, color=colour, marker=marker, lw=1.5, label=name)
-        ax.fill_between(centres, low, high, color=colour, alpha=0.2, linewidth=0.0)
+        # Each bin's interval spans the bin's edges, so a bin between empty bins keeps its band.
+        ax.fill_between(
+            np.repeat(edges, 2)[1:-1],
+            np.repeat(low, 2),
+            np.repeat(high, 2),
+            color=colour,
+            alpha=0.2,
+            linewidth=0.0,
+        )
     ax.set_ylim(0.0, 1.0)
     ax.set_xlabel(_label(by))
     ax.set_ylabel("hit rate" if among == "all" else "hit rate (covered)")

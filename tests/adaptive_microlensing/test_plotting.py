@@ -387,3 +387,24 @@ def test_figures_leave_rcparams_unchanged(built_bank, patchy_bank, query_table):
     plotting.plot_hit_rate(query_table)
     plotting.plot_build(built_bank, "saddle")
     assert dict(matplotlib.rcParams) == before
+
+
+def test_every_non_empty_bin_keeps_a_visible_interval():
+    """A bin between empty bins still gets its Wilson band, spanning the bin."""
+    table = pd.DataFrame(
+        {
+            "s": [0.05, 0.15, 0.55, 0.56, 0.95, 0.96],
+            "query_region": ["minima", "minima", "maxima", "maxima", "minima", "minima"],
+            "is_hit": [True, False, True, False, True, False],
+            "interpolation_status": ["hit", "miss", "hit", "miss", "hit", "miss"],
+        }
+    )
+    edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    ax = plotting.plot_hit_rate(table, bins=edges)
+    for line, band in zip(ax.lines, ax.collections, strict=True):
+        spans = [path.get_extents() for path in band.get_paths()]
+        for i in np.flatnonzero(np.isfinite(np.asarray(line.get_ydata(), dtype=float))):
+            assert any(
+                span.x0 <= edges[i] + 1e-12 and span.x1 >= edges[i + 1] - 1e-12 and span.height > 0
+                for span in spans
+            ), (line.get_label(), i)
