@@ -82,6 +82,13 @@ def test_empty_entries_round_trip(tmp_path):
     pd.testing.assert_frame_equal(restored, empty_entries())
 
 
+@pytest.mark.parametrize("missing", [math.nan, None])
+def test_a_missing_validity_flag_is_refused(missing):
+    """A missing valid flag is neither taken as valid nor as invalid."""
+    with pytest.raises(BankCorruptError, match="valid"):
+        normalise_entries(pd.DataFrame([_row(0, valid=missing)]))
+
+
 def test_atomic_writes_leave_no_temporary_files(tmp_path):
     """Atomic writes leave no temporary files."""
     path = tmp_path / "payload.json"

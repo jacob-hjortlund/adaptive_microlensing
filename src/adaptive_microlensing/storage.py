@@ -311,9 +311,9 @@ def normalise_entries(frame: pd.DataFrame) -> pd.DataFrame:
     Raises
     ------
     BankCorruptError
-        If ``frame`` lacks any column of :data:`ENTRY_COLUMNS`. A value that cannot be
-        converted, such as a missing ``entry_id``, raises the pandas conversion error
-        instead.
+        If ``frame`` lacks any column of :data:`ENTRY_COLUMNS`, or a ``valid`` flag is
+        missing. Another value that cannot be converted, such as a missing ``entry_id``,
+        raises the pandas conversion error instead.
     """
     missing = sorted(set(ENTRY_COLUMNS).difference(frame.columns))
     if missing:
@@ -322,6 +322,9 @@ def normalise_entries(frame: pd.DataFrame) -> pd.DataFrame:
     for column in INT_COLUMNS:
         table[column] = table[column].astype("int64")
     for column in BOOL_COLUMNS:
+        # astype(bool) would read NaN as True and None as False.
+        if table[column].isna().any():
+            raise BankCorruptError(f"The entries table has missing values in {column!r}.")
         table[column] = table[column].astype(bool)
     for column in NULLABLE_INT_COLUMNS:
         table[column] = table[column].astype("Int64")
