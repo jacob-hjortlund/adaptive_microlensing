@@ -1,8 +1,9 @@
 """Shared pytest fixtures."""
 
 import pytest
-from adaptive_microlensing import MapBank, SyntheticGenerator
-from helpers import FAILURE_BOX, TETRAHEDRON, add_entry, small_config
+from adaptive_microlensing import MapBank, StoppingCriteria, SyntheticGenerator
+from adaptive_microlensing.lensing import REGIONS
+from helpers import FAILURE_BOX, PATCH_BOX, TETRAHEDRON, add_entry, small_config
 
 
 @pytest.fixture
@@ -47,5 +48,36 @@ def failing_bank(tmp_path, failing_generator):
     for point in TETRAHEDRON:
         add_entry(bank, "minima", point, failing_generator)
     bank.finalize("minima")
+    yield bank
+    bank.close()
+
+
+@pytest.fixture(scope="session")
+def built_bank(tmp_path_factory):
+    """A read-only bank whose three regions are built to 30 valid entries and finalized.
+
+    Thirty valid entries exceed every region's design-hull vertex count (at most 18), so
+    each region's mesh fills its design hull.
+    """
+    path = tmp_path_factory.mktemp("built") / "bank"
+    with MapBank.create(path, small_config()) as bank:
+        for region in REGIONS:
+            bank.build(region, StoppingCriteria(max_valid_points=30))
+            bank.finalize(region)
+    bank = MapBank.open(path)
+    yield bank
+    bank.close()
+
+
+@pytest.fixture(scope="session")
+def patchy_bank(tmp_path_factory):
+    """A read-only bank with failures in minima (finalized), an unfinalized saddle and no maxima."""
+    generator = SyntheticGenerator(failure_boxes=[PATCH_BOX])
+    path = tmp_path_factory.mktemp("patchy") / "bank"
+    with MapBank.create(path, small_config(generator)) as bank:
+        bank.build("minima", StoppingCriteria(max_valid_points=40), generator=generator)
+        bank.finalize("minima")
+        bank.build("saddle", StoppingCriteria(max_valid_points=30), generator=generator)
+    bank = MapBank.open(path)
     yield bank
     bank.close()

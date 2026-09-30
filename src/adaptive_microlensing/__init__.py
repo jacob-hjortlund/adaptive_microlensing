@@ -37,6 +37,7 @@ from .results import (
     QueryStatus,
     hit_summary,
 )
+from .slicing import RegionSlice, slice_region
 from .synthetic import SyntheticGenerator
 
 __all__ = [
@@ -61,6 +62,7 @@ __all__ = [
     "MapSpec",
     "QueryResult",
     "QueryStatus",
+    "RegionSlice",
     "RegionStateError",
     "StoppingCriteria",
     "SyntheticGenerator",
@@ -70,4 +72,5 @@ __all__ = [
     "hit_summary",
     "import_legacy_bank",
     "register_generator",
+    "slice_region",
 ]

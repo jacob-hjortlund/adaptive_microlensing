@@ -22,6 +22,8 @@ NEAR_FIRST_VERTEX = (0.101, 0.101, 0.101)
 OUTSIDE_TETRAHEDRON = (0.3, 0.3, 0.8)
 # A failure box around the second tetrahedron vertex, (0.6, 0.1, 0.1).
 FAILURE_BOX = [[0.55, 0.65], [0.05, 0.15], [0.05, 0.15]]
+# A failure box inside the minima region that an adaptive build of 40 valid points samples.
+PATCH_BOX = [[0.2, 0.45], [0.1, 0.35], [0.3, 0.7]]
 
 
 def small_config(generator: SyntheticGenerator | None = None, **overrides: Any) -> BankConfig:
