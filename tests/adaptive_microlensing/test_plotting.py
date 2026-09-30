@@ -2,8 +2,10 @@ import importlib
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 from adaptive_microlensing import coverage_grid
+from helpers import batch_table
 
 matplotlib = pytest.importorskip("matplotlib")
 sns = pytest.importorskip("seaborn")
@@ -224,3 +226,118 @@ def test_plot_entries_by_quantile_and_arguments(built_bank, patchy_bank):
         plotting.plot_entries(built_bank, hue="seed")
     with pytest.raises(ValueError, match="no entries"):
         plotting.plot_entries(patchy_bank, regions=["maxima"])
+
+
+@pytest.fixture(scope="module")
+def query_table(patchy_bank):
+    """query_many output for 400 random points over the domain box."""
+    rng = np.random.default_rng(2)
+    points = pd.DataFrame(
+        {
+            "kappa": rng.uniform(0.05, 2.0, 400),
+            "gamma": rng.uniform(0.05, 2.0, 400),
+            "s": rng.uniform(0.01, 0.99, 400),
+        }
+    )
+    return patchy_bank.query_many(points)
+
+
+def test_plot_queries_by_status(query_table, patchy_bank):
+    """Each status group is labelled with its count; kappa-gamma with a domain gets curves."""
+    ax = plotting.plot_queries(query_table, domain=patchy_bank.config.domain)
+    groups = plotting._status_groups(query_table["interpolation_status"])
+    expected = {
+        f"{name.replace('_', ' ')} ({int((groups == name).sum())})"
+        for name in plotting.STATUS_STYLE
+        if (groups == name).any()
+    }
+    assert set(_legend_labels(ax)) == expected | {INFINITE, FINITE}
+    assert ax.get_xlim() == patchy_bank.config.domain.kappa_range
+    ax = plotting.plot_queries(query_table, x="kappa", y="s", domain=patchy_bank.config.domain)
+    assert len(ax.lines) == 0 and (ax.get_xlabel(), ax.get_ylabel()) == (r"$\kappa$", "$s$")
+
+
+def test_plot_queries_by_margin_and_arguments(query_table):
+    """Margin mode adds a colourbar; bad axes, colours and missing columns raise."""
+    ax = plotting.plot_queries(query_table, color="margin")
+    assert ax.figure.axes[-1].get_ylabel() == plotting.MARGIN_LABEL
+    assert "not covered" in _legend_labels(ax)
+    with pytest.raises(ValueError, match="two different names"):
+        plotting.plot_queries(query_table, x="kappa", y="kappa")
+    with pytest.raises(ValueError, match="two different names"):
+        plotting.plot_queries(query_table, x="mu")
+    with pytest.raises(ValueError, match="color"):
+        plotting.plot_queries(query_table, color="region")
+    with pytest.raises(ValueError, match="interpolation_status"):
+        plotting.plot_queries(query_table.drop(columns="interpolation_status"))
+    with pytest.raises(ValueError, match="distance_margin"):
+        plotting.plot_queries(query_table.drop(columns="distance_margin"), color="margin")
+
+
+HIT_TABLE = pd.DataFrame(
+    {
+        "s": [0.1, 0.1, 0.1, 0.1, 0.6, 0.6, 0.6, 0.9],
+        "redshift": [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
+        "query_region": ["minima", "minima", "minima", "saddle", "minima", "minima", "maxima", None],
+        "is_hit": [True, True, False, True, False, False, True, False],
+        "interpolation_status": ["hit", "hit", "miss", "hit", "miss", "outside_hull", "hit", "critical_line"],
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("among", "expected", "ylabel"),
+    [
+        ("all", [[2 / 3, 0.0], [1.0, np.nan], [np.nan, 1.0], [0.75, 0.25]], "hit rate"),
+        ("covered", [[2 / 3, 0.0], [1.0, np.nan], [np.nan, 1.0], [0.75, 0.5]], "hit rate (covered)"),
+    ],
+)
+def test_plot_hit_rate_counts_by_hand(among, expected, ylabel):
+    """Rates per bin match a hand count for minima, saddle, maxima and all queries."""
+    ax = plotting.plot_hit_rate(HIT_TABLE, bins=[0.0, 0.5, 1.0], among=among)
+    assert [line.get_label() for line in ax.lines] == ["minima", "saddle", "maxima", "all"]
+    for line, rates in zip(ax.lines, expected, strict=True):
+        np.testing.assert_allclose(line.get_xdata(), [0.25, 0.75])
+        np.testing.assert_allclose(line.get_ydata(), rates)
+    assert ax.get_ylabel() == ylabel and ax.get_ylim() == (0.0, 1.0)
+    ax = plotting.plot_hit_rate(HIT_TABLE, bins=2)
+    np.testing.assert_allclose(ax.lines[-1].get_xdata(), [0.3, 0.7])
+    ax = plotting.plot_hit_rate(HIT_TABLE, by="redshift", bins=2)
+    assert ax.get_xlabel() == "redshift"
+
+
+def test_rows_without_a_value_are_left_out_of_hit_rates():
+    """A row with NaN in the binned column, such as a malformed query, counts in no bin."""
+    malformed = {"s": [np.nan], "redshift": [np.nan], "query_region": [None], "is_hit": [False]}
+    table = pd.concat(
+        [HIT_TABLE, pd.DataFrame({**malformed, "interpolation_status": ["malformed"]})], ignore_index=True
+    )
+    ax = plotting.plot_hit_rate(table, bins=[0.0, 0.5, 1.0])
+    np.testing.assert_allclose(ax.lines[-1].get_ydata(), [0.75, 0.25])
+    ax = plotting.plot_hit_rate(table, bins=2)
+    np.testing.assert_allclose(ax.lines[-1].get_xdata(), [0.3, 0.7])
+
+
+def test_query_figures_accept_fetch_many_tables(tetra_bank):
+    """fetch_many output, with its extra columns and refused rows, draws like query_many output."""
+    table = tetra_bank.fetch_many(batch_table())
+    ax = plotting.plot_queries(table, domain=tetra_bank.config.domain)
+    assert "outside domain (1)" in _legend_labels(ax)
+    ax = plotting.plot_hit_rate(table, bins=2)
+    assert [line.get_label() for line in ax.lines] == ["minima", "saddle", "all"]
+
+
+def test_wilson_interval_and_hit_rate_arguments():
+    """The Wilson interval matches a hand calculation; bad arguments raise."""
+    low, high = plotting._wilson(np.array([5.0, 0.0]), np.array([10.0, 0.0]), 1.0)
+    np.testing.assert_allclose([low[0], high[0]], [0.5 - 0.0275**0.5 / 1.1, 0.5 + 0.0275**0.5 / 1.1])
+    assert np.isnan(low[1]) and np.isnan(high[1])
+    for kwargs, message in (
+        ({"among": "hits"}, "among"),
+        ({"interval": 1.0}, "interval"),
+        ({"bins": 0}, "bins"),
+        ({"bins": [1.0, 0.0]}, "bins"),
+        ({"by": "kappa"}, "kappa"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            plotting.plot_hit_rate(HIT_TABLE, **kwargs)

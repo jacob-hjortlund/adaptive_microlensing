@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm as normal_distribution
 
 try:
     import matplotlib.pyplot as plt
@@ -511,3 +512,154 @@ def _quantile_pairs(table: pd.DataFrame, quantile: float) -> Any:
     )
     _relabel(grid)
     return grid
+
+
+def plot_queries(
+    table: pd.DataFrame,
+    *,
+    x: str = "kappa",
+    y: str = "gamma",
+    color: str = "status",
+    domain: DomainSpec | None = None,
+    ax: Axes | None = None,
+    size: float = 6.0,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    legend: bool = True,
+    colorbar: bool = True,
+) -> Axes:
+    """Scatter the queries of a ``query_many`` or ``fetch_many`` table, by status or margin.
+
+    With ``domain``, the limits are the domain box and the kappa-gamma projection shows the
+    critical curves.
+    """
+    if x not in AXES or y not in AXES or x == y:
+        raise ValueError(f"x and y must be two different names from {AXES}; got {x!r} and {y!r}.")
+    if color not in ("status", "margin"):
+        raise ValueError(f"color must be 'status' or 'margin', got {color!r}.")
+    required = ["kappa", "gamma", "s", "interpolation_status"]
+    _require(table, required + (["distance_margin"] if color == "margin" else []))
+    ax = _axes(ax)
+    status = _status_groups(table["interpolation_status"])
+    xs, ys = table[x].to_numpy(dtype=float), table[y].to_numpy(dtype=float)
+    common: dict[str, Any] = {"s": size, "linewidths": 0.0, "rasterized": True}
+    if color == "status":
+        for name, (colour, marker) in STATUS_STYLE.items():
+            rows = status == name
+            if rows.any():
+                ax.scatter(
+                    xs[rows],
+                    ys[rows],
+                    color=colour,
+                    marker=marker,
+                    label=f"{_status_label(name)} ({int(rows.sum())})",
+                    **common,
+                )
+    else:
+        covered = np.isin(status, ("hit", "miss"))
+        if (~covered).any():
+            ax.scatter(
+                xs[~covered], ys[~covered], color=LIGHT_GREY, marker=".", label="not covered", **common
+            )
+        margins = table["distance_margin"].to_numpy(dtype=float)
+        points = ax.scatter(
+            xs[covered],
+            ys[covered],
+            c=margins[covered],
+            cmap=MARGIN_CMAP,
+            norm=_margin_norm(margins[covered], vmin, vmax),
+            **common,
+        )
+        if colorbar:
+            ax.figure.colorbar(points, ax=ax, pad=0.02, label=MARGIN_LABEL)
+    if domain is not None:
+        ax.set_xlim(*axis_range(domain, x))
+        ax.set_ylim(*axis_range(domain, y))
+        if (x, y) == ("kappa", "gamma"):
+            _critical_curves(ax, domain, "s", None)
+    ax.set_xlabel(_label(x))
+    ax.set_ylabel(_label(y))
+    if legend:
+        _legend(ax)
+    return ax
+
+
+def _wilson(hits: np.ndarray, counts: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray]:
+    """Wilson score interval of hits / counts; NaN where counts is zero."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        rate = hits / counts
+        denominator = 1.0 + z**2 / counts
+        centre = (rate + z**2 / (2.0 * counts)) / denominator
+        half = z * np.sqrt(rate * (1.0 - rate) / counts + z**2 / (4.0 * counts**2)) / denominator
+    return centre - half, centre + half
+
+
+def _bin_edges(values: np.ndarray, bins: int | Sequence[float]) -> np.ndarray:
+    if isinstance(bins, int | np.integer) and not isinstance(bins, bool):
+        finite = values[np.isfinite(values)]
+        if bins < 1 or finite.size == 0:
+            raise ValueError(f"Need bins >= 1 and at least one finite value; got bins={bins}.")
+        low, high = float(finite.min()), float(finite.max())
+        if low == high:
+            low, high = low - 0.5, high + 0.5
+        return np.linspace(low, high, int(bins) + 1)
+    edges = np.asarray(bins, dtype=float)
+    if edges.ndim != 1 or edges.size < 2 or not np.all(np.diff(edges) > 0):
+        raise ValueError("bins must be a positive integer or an increasing sequence of edges.")
+    return edges
+
+
+def plot_hit_rate(
+    table: pd.DataFrame,
+    *,
+    by: str = "s",
+    bins: int | Sequence[float] = 10,
+    among: str = "all",
+    interval: float = 0.68,
+    ax: Axes | None = None,
+    legend: bool = True,
+) -> Axes:
+    """Hit rate per bin of a numeric column, per region and overall, with Wilson intervals.
+
+    ``among="all"`` counts every query; ``among="covered"`` counts only hits and misses.
+    """
+    if among not in ("all", "covered"):
+        raise ValueError(f"among must be 'all' or 'covered', got {among!r}.")
+    if not 0.0 < interval < 1.0:
+        raise ValueError(f"interval must lie in (0, 1), got {interval!r}.")
+    _require(table, [by, "query_region", "is_hit", "interpolation_status"])
+    values = table[by].to_numpy(dtype=float)
+    edges = _bin_edges(values, bins)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    n_bins = len(centres)
+    inside = np.isfinite(values) & (values >= edges[0]) & (values <= edges[-1])
+    which = np.clip(np.searchsorted(edges, values, side="right") - 1, 0, n_bins - 1)
+    hits = table["is_hit"].to_numpy(dtype=bool)
+    counted = inside.copy()
+    if among == "covered":
+        counted &= np.isin(table["interpolation_status"].to_numpy(dtype=str), ("hit", "miss"))
+    z = float(normal_distribution.ppf(0.5 + interval / 2.0))
+    regions = table["query_region"].to_numpy(dtype=object)
+    series: list[tuple[str, Style, np.ndarray]] = [
+        (region, REGION_STYLE[region], regions == region) for region in REGIONS
+    ]
+    series.append(("all", (DARK_GREY, "o"), np.ones(len(table), dtype=bool)))
+
+    ax = _axes(ax)
+    for name, (colour, marker), mask in series:
+        use = mask & counted
+        if not use.any():
+            continue
+        counts = np.bincount(which[use], minlength=n_bins).astype(float)
+        hit_counts = np.bincount(which[use], weights=hits[use].astype(float), minlength=n_bins)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            rate = hit_counts / counts
+        low, high = _wilson(hit_counts, counts, z)
+        ax.plot(centres, rate, color=colour, marker=marker, lw=1.5, label=name)
+        ax.fill_between(centres, low, high, color=colour, alpha=0.2, linewidth=0.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel(_label(by))
+    ax.set_ylabel("hit rate" if among == "all" else "hit rate (covered)")
+    if legend:
+        _legend(ax)
+    return ax
