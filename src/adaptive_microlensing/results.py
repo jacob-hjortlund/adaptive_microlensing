@@ -69,8 +69,9 @@ class BankEntry:
 class QueryResult:
     """Outcome of one query.
 
-    ``matched`` is the nearest vertex whenever the hit rule was applied, for hits
-    and misses alike; ``entry`` is that entry only on a hit.
+    ``matched`` is the vertex the hit rule settled on, for hits and misses alike: the
+    passing vertex nearest in MPD distance on a hit, the vertex closest to passing on a
+    miss. ``entry`` is that entry only on a hit.
     """
 
     status: QueryStatus

@@ -32,6 +32,30 @@ NUMERIC_COLUMNS = (
 )
 
 
+def _every_vertex_rule(row, quantiles):
+    """The hit rule on every vertex, applied to one covered row of the original script's output.
+
+    The original script tested only the vertex with the smallest distance.
+    """
+    rows = json.loads(row["simplex_rows"])
+    distances = np.array(json.loads(row["vertex_distances"]))
+    vertex_quantiles = quantiles[row["query_region"]][rows]
+    thresholds = np.maximum(row["query_mpd_quantile"], vertex_quantiles)
+    passing = distances <= thresholds
+    if passing.any():
+        local = int(np.argmin(np.where(passing, distances, np.inf)))
+    else:
+        local = int(np.argmax(thresholds - distances))
+    return {
+        "is_hit": bool(passing.any()),
+        "matched_row": rows[local],
+        "interpolated_mpd_distance": distances[local],
+        "matched_mpd_quantile": vertex_quantiles[local],
+        "distance_threshold": thresholds[local],
+        "distance_margin": thresholds[local] - distances[local],
+    }
+
+
 def _region_points(region, count, rng):
     points = []
     while len(points) < count:
@@ -106,7 +130,10 @@ def test_import_registers_entries_and_links_maps(imported, legacy_source):
 
 
 def test_query_matches_the_original_query_script(imported, legacy_source):
-    """Queries on the imported bank match the original run_mpd_interpolator.py code."""
+    """Queries on the imported bank match the original run_mpd_interpolator.py code.
+
+    The one intended difference is the hit rule, which the bank applies to every vertex.
+    """
     rng = np.random.default_rng(7)
     queries = pd.DataFrame(
         {
@@ -118,18 +145,45 @@ def test_query_matches_the_original_query_script(imported, legacy_source):
     new = imported.query_many(queries)
     old = legacy_query_table(legacy_source, queries)
 
-    assert (new["is_hit"] == old["is_hit"]).all()
     covered = old["interpolation_status"] == "covered"
+    assert not new.loc[~covered, "is_hit"].any()
     assert covered.sum() > 50 and new.loc[covered, "is_hit"].any() and not new.loc[covered, "is_hit"].all()
     assert new.loc[covered, "interpolation_status"].isin(["hit", "miss"]).all()
     for column in ("query_region", "simplex_rows"):
         assert (new.loc[covered, column] == old.loc[covered, column]).all(), column
-    for column in ("simplex_index", "matched_row"):
-        assert (new.loc[covered, column].astype(int) == old.loc[covered, column].astype(int)).all(), column
+    assert (
+        new.loc[covered, "simplex_index"].astype(int) == old.loc[covered, "simplex_index"].astype(int)
+    ).all()
+    np.testing.assert_allclose(
+        new.loc[covered, "query_mpd_quantile"], old.loc[covered, "query_mpd_quantile"], rtol=1e-9
+    )
+
+    # Where the original found a hit, its nearest vertex passed, so the bank matches it too.
+    old_hits = covered & old["is_hit"]
+    assert new.loc[old_hits, "is_hit"].all()
+    assert (
+        new.loc[old_hits, "matched_row"].astype(int) == old.loc[old_hits, "matched_row"].astype(int)
+    ).all()
     for column in NUMERIC_COLUMNS:
         np.testing.assert_allclose(
-            new.loc[covered, column], old.loc[covered, column], rtol=1e-9, err_msg=column
+            new.loc[old_hits, column], old.loc[old_hits, column], rtol=1e-9, err_msg=column
         )
+
+    # Everywhere it covered, the bank agrees with the hit rule applied to every vertex.
+    quantiles = {
+        region: pd.read_csv(legacy_source / f"{region}_data.csv")["mpd_distance"].to_numpy()
+        for region in REGIONS
+    }
+    expected = pd.DataFrame(
+        [_every_vertex_rule(row, quantiles) for _, row in old.loc[covered].iterrows()],
+        index=old.index[covered],
+    )
+    assert (expected["is_hit"] & ~old.loc[covered, "is_hit"]).any()  # some nearest-vertex misses become hits
+    assert (new.loc[covered, "is_hit"] == expected["is_hit"]).all()
+    assert (new.loc[covered, "matched_row"].astype(int) == expected["matched_row"]).all()
+    for column in NUMERIC_COLUMNS:
+        if column != "query_mpd_quantile":
+            np.testing.assert_allclose(new.loc[covered, column], expected[column], rtol=1e-9, err_msg=column)
     for column in ("barycentric_weights", "vertex_distances"):
         new_values = np.array([json.loads(v) for v in new.loc[covered, column]])
         old_values = np.array([json.loads(v) for v in old.loc[covered, column]])

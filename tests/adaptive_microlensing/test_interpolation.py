@@ -16,8 +16,8 @@ DISTANCES = np.array(
 )
 
 
-def _index(valid=(True, True, True, True)):
-    return RegionIndex(UNIT, np.array(valid), QUANTILES, mpds=np.ones((4, 3)), distances=DISTANCES)
+def _index(valid=(True, True, True, True), quantiles=QUANTILES):
+    return RegionIndex(UNIT, np.array(valid), np.array(quantiles), mpds=np.ones((4, 3)), distances=DISTANCES)
 
 
 def test_weights_at_centroid_vertex_face_and_outside():
@@ -55,6 +55,32 @@ def test_hit_rule_on_a_hand_built_distance_matrix():
     assert evaluation.margin == pytest.approx(evaluation.threshold - 0.21)
     near_vertex = index.locate(np.array([0.01, 0.01, 0.01]))
     assert near_vertex is not None and index.evaluate(near_vertex).is_hit
+
+
+# At (0.1, 0.1, 0.1) the vertex distances are (0.21, 0.56, 0.58, 0.69) for vertices 0..3.
+@pytest.mark.parametrize(
+    ("quantiles", "is_hit", "matched", "distance", "threshold"),
+    [
+        # q_hat = 0.17: only vertex 1 passes, on its own quantile, although vertex 0 is nearer.
+        ((0.10, 0.60, 0.20, 0.20), True, 1, 0.56, 0.60),
+        # q_hat = 0.175: vertices 1 and 2 pass; vertex 1 is nearer, vertex 2 has the larger margin.
+        ((0.05, 0.60, 0.70, 0.10), True, 1, 0.56, 0.60),
+        # q_hat = 0.125: none pass; vertex 1 misses by 0.06, the nearest vertex 0 by 0.085.
+        ((0.05, 0.50, 0.20, 0.20), False, 1, 0.56, 0.50),
+    ],
+)
+def test_hit_rule_checks_every_vertex(quantiles, is_hit, matched, distance, threshold):
+    """A hit matches the nearest passing vertex; a miss reports the vertex closest to passing."""
+    index = _index(quantiles=quantiles)
+    location = index.locate(np.array([0.1, 0.1, 0.1]))
+    assert location is not None
+    evaluation = index.evaluate(location)
+    assert evaluation.is_hit is is_hit
+    assert evaluation.matched_entry_id == matched
+    assert evaluation.interpolated_distance == pytest.approx(distance)
+    assert evaluation.matched_quantile == pytest.approx(quantiles[matched])
+    assert evaluation.threshold == pytest.approx(threshold)
+    assert evaluation.margin == pytest.approx(threshold - distance)
 
 
 def test_invalid_vertices_block_interpolation():

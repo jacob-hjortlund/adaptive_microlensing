@@ -24,7 +24,11 @@ class Location:
 
 @dataclass(frozen=True)
 class HitEvaluation:
-    """Outcome of the hit rule in one tetrahedron."""
+    """Outcome of the hit rule in one tetrahedron.
+
+    The matched entry is the passing vertex nearest in MPD distance on a hit, and the
+    vertex closest to passing on a miss. The other fields describe that vertex.
+    """
 
     vertex_distances: np.ndarray
     matched_entry_id: int
@@ -36,7 +40,7 @@ class HitEvaluation:
 
     @property
     def margin(self) -> float:
-        """How far the interpolated distance lies below the threshold."""
+        """How far the interpolated distance lies below the threshold; on a miss, minus the gap to a hit."""
         return self.threshold - self.interpolated_distance
 
 
@@ -151,7 +155,12 @@ class RegionIndex:
         return float(location.weights @ self.quantiles[location.vertices])
 
     def evaluate(self, location: Location) -> HitEvaluation:
-        """Apply the hit rule in a fully valid tetrahedron."""
+        """Apply the hit rule in a fully valid tetrahedron.
+
+        A vertex passes when its interpolated distance is at most the larger of the
+        query's and its own intrinsic quantile. On a hit the match is the passing vertex
+        with the smallest distance; on a miss it is the vertex closest to passing.
+        """
         if self.distances is None:
             raise RuntimeError("This index has no MPD distances; finalize the region first.")
         rows = location.vertices
@@ -160,17 +169,20 @@ class RegionIndex:
             raise RuntimeError(f"Incomplete distance matrix for entries {rows.tolist()}.")
         # local[j, i] = d(v_j, v_i), so element i is sum_j lambda_j d(v_j, v_i).
         vertex_distances = location.weights @ local
-        nearest = int(np.argmin(vertex_distances))
-        interpolated = float(vertex_distances[nearest])
         query_quantile = float(location.weights @ self.quantiles[rows])
-        matched_quantile = float(self.quantiles[rows[nearest]])
-        threshold = max(query_quantile, matched_quantile)
+        thresholds = np.maximum(query_quantile, self.quantiles[rows])
+        passing = vertex_distances <= thresholds
+        is_hit = bool(passing.any())
+        if is_hit:
+            matched = int(np.argmin(np.where(passing, vertex_distances, np.inf)))
+        else:
+            matched = int(np.argmax(thresholds - vertex_distances))
         return HitEvaluation(
             vertex_distances=vertex_distances,
-            matched_entry_id=int(rows[nearest]),
-            interpolated_distance=interpolated,
+            matched_entry_id=int(rows[matched]),
+            interpolated_distance=float(vertex_distances[matched]),
             query_quantile=query_quantile,
-            matched_quantile=matched_quantile,
-            threshold=threshold,
-            is_hit=bool(interpolated <= threshold),
+            matched_quantile=float(self.quantiles[rows[matched]]),
+            threshold=float(thresholds[matched]),
+            is_hit=is_hit,
         )
