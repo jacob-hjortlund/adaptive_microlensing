@@ -4,8 +4,8 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-from adaptive_microlensing import coverage_grid
-from helpers import batch_table
+from adaptive_microlensing import StoppingCriteria, coverage_grid
+from helpers import TETRAHEDRON, add_entry, batch_table
 
 matplotlib = pytest.importorskip("matplotlib")
 sns = pytest.importorskip("seaborn")
@@ -341,3 +341,49 @@ def test_wilson_interval_and_hit_rate_arguments():
     ):
         with pytest.raises(ValueError, match=message):
             plotting.plot_hit_rate(HIT_TABLE, **kwargs)
+
+
+def test_plot_build_panels_and_goals(built_bank):
+    """Three panels; goals are horizontal lines, the max-valid-points entry a vertical one."""
+    stop = StoppingCriteria(max_valid_points=20, simplex_loss_goal=0.2, residual_goal=0.1)
+    figure = plotting.plot_build(built_bank, "minima", stop=stop)
+    loss_ax, residual_ax, valid_ax = figure.axes
+    assert (loss_ax.get_yscale(), residual_ax.get_yscale()) == ("log", "log")
+    assert loss_ax.get_title() == "minima"
+    assert [ax.get_ylabel() for ax in figure.axes] == ["simplex loss", "relative residual", "valid fraction"]
+
+    def lines(ax, label):
+        return [line for line in ax.lines if line.get_label() == label]
+
+    assert lines(loss_ax, "goal")[0].get_ydata()[0] == 0.2
+    assert lines(residual_ax, "goal")[0].get_ydata()[0] == 0.1
+    for ax in figure.axes:
+        assert lines(ax, "max valid points")[0].get_xdata()[0] == 19
+
+
+def test_plot_build_rows_and_arguments(bank, built_bank, patchy_bank):
+    """Build and legacy rows are plotted and fetch rows are not; bad axes and empty regions raise."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point, origin="legacy")
+    add_entry(bank, "minima", (0.2, 0.2, 0.5), origin="fetch")
+    _, axes = plt.subplots(3)
+    figure = plotting.plot_build(bank, "minima", axes=axes)
+    assert figure is axes[0].figure
+    np.testing.assert_array_equal(axes[2].lines[0].get_xdata(), [0, 1, 2, 3])
+    with pytest.raises(ValueError, match="exactly three"):
+        plotting.plot_build(built_bank, "minima", axes=axes[:2])
+    with pytest.raises(ValueError, match="no build or legacy"):
+        plotting.plot_build(patchy_bank, "maxima")
+
+
+def test_figures_leave_rcparams_unchanged(built_bank, patchy_bank, query_table):
+    """No function changes matplotlib's global settings."""
+    before = dict(matplotlib.rcParams)
+    plotting.plot_slice(patchy_bank, s=0.5)
+    plotting.plot_coverage(patchy_bank, s=0.5, n=10, color="margin")
+    plotting.plot_entries(patchy_bank, hue="error")
+    plotting.plot_entries(built_bank, hue="quantile")
+    plotting.plot_queries(query_table, color="margin")
+    plotting.plot_hit_rate(query_table)
+    plotting.plot_build(built_bank, "saddle")
+    assert dict(matplotlib.rcParams) == before

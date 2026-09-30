@@ -34,12 +34,13 @@ except ImportError as exc:
         "pip install 'adaptive_microlensing[plot]'."
     ) from exc
 
-from .config import DomainSpec
+from .config import DomainSpec, StoppingCriteria
 from .lensing import REGIONS
 from .slicing import AXES, CoverageGrid, axis_range, coverage_grid, slice_region
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
     from .bank import MapBank
 
@@ -663,3 +664,60 @@ def plot_hit_rate(
     if legend:
         _legend(ax)
     return ax
+
+
+def plot_build(
+    bank: MapBank, region: str, *, stop: StoppingCriteria | None = None, axes: Sequence[Axes] | None = None
+) -> Figure:
+    """Simplex loss, relative residuals and valid fraction of a region's build, against entry number."""
+    table = bank.entries(region)
+    rows = table[table["origin"].isin(["build", "legacy"])]
+    if rows.empty:
+        raise ValueError(f"Region {region!r} has no build or legacy entries.")
+    if axes is None:
+        figure, created = plt.subplots(3, 1, sharex=True, figsize=(6.4, 7.2))
+        panels = list(created)
+    else:
+        panels = list(axes)
+        if len(panels) != 3:
+            raise ValueError(f"axes must hold exactly three axes, got {len(panels)}.")
+        figure = panels[0].figure
+    loss_ax, residual_ax, valid_ax = panels
+    entry = rows["entry_id"].to_numpy()
+
+    def positive(column: str) -> tuple[np.ndarray, np.ndarray]:
+        values = rows[column].to_numpy(dtype=float)
+        keep = np.isfinite(values) & (values > 0.0)
+        return entry[keep], values[keep]
+
+    loss_ax.plot(*positive("simplex_loss"), color=PALETTE[0], lw=1.2)
+    loss_ax.set_yscale("log")
+    loss_ax.set_ylabel("simplex loss")
+    loss_ax.set_title(region)
+    residual_ax.scatter(
+        *positive("rel_residual"), color=PALETTE[0], s=6, linewidths=0.0, label="relative residual"
+    )
+    residual_ax.plot(*positive("max_residual"), color=DARK_GREY, lw=1.2, label="running maximum")
+    residual_ax.set_yscale("log")
+    residual_ax.set_ylabel("relative residual")
+    valid = rows["valid"].to_numpy(dtype=bool)
+    valid_ax.plot(entry, np.cumsum(valid) / np.arange(1, len(valid) + 1), color=PALETTE[0], lw=1.2)
+    valid_ax.set_ylim(0.0, 1.02)
+    valid_ax.set_ylabel("valid fraction")
+    valid_ax.set_xlabel("entry")
+
+    if stop is not None:
+        goal: dict[str, Any] = {"color": "0.15", "ls": ":", "lw": 1.2, "label": "goal"}
+        if stop.simplex_loss_goal is not None:
+            loss_ax.axhline(stop.simplex_loss_goal, **goal)
+        if stop.residual_goal is not None:
+            residual_ax.axhline(stop.residual_goal, **goal)
+        if stop.max_valid_points is not None:
+            reached = np.flatnonzero(np.cumsum(valid) >= stop.max_valid_points)
+            if reached.size:
+                for panel in panels:
+                    panel.axvline(entry[reached[0]], **{**goal, "label": "max valid points"})
+    for panel in panels:
+        if panel.get_legend_handles_labels()[1]:
+            _legend(panel)
+    return figure
