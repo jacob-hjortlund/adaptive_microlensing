@@ -635,7 +635,8 @@ def plot_hit_rate(
     n_bins = len(centres)
     inside = np.isfinite(values) & (values >= edges[0]) & (values <= edges[-1])
     which = np.clip(np.searchsorted(edges, values, side="right") - 1, 0, n_bins - 1)
-    hits = table["is_hit"].to_numpy(dtype=bool)
+    # Only a true flag is a hit: NaN, as a merge leaves on rows never queried, would cast to True.
+    hits = table["is_hit"].eq(True).fillna(False).to_numpy(dtype=bool)
     counted = inside.copy()
     if among == "covered":
         counted &= np.isin(table["interpolation_status"].to_numpy(dtype=str), ("hit", "miss"))

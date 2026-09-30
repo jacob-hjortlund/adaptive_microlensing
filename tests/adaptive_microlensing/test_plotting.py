@@ -422,3 +422,13 @@ def test_the_stop_line_counts_every_valid_entry_like_the_build(bank):
     for ax in figure.axes:
         marks = [line for line in ax.lines if line.get_label() == "max valid points"]
         assert [line.get_xdata()[0] for line in marks] == [7]
+
+
+def test_rows_without_a_hit_flag_are_not_hits():
+    """A NaN is_hit, as a left merge leaves on rows that were never queried, is not a hit."""
+    unqueried = {"s": [0.6], "redshift": [1.8], "query_region": [None], "is_hit": [np.nan]}
+    table = pd.concat(
+        [HIT_TABLE, pd.DataFrame({**unqueried, "interpolation_status": [np.nan]})], ignore_index=True
+    )
+    ax = plotting.plot_hit_rate(table, bins=[0.0, 0.5, 1.0])
+    np.testing.assert_allclose(ax.lines[-1].get_ydata(), [0.75, 0.2])
