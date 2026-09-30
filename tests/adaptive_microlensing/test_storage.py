@@ -1,10 +1,11 @@
+import errno
 import math
 import os
 
 import numpy as np
 import pandas as pd
 import pytest
-from adaptive_microlensing import BankCorruptError, BankLockedError
+from adaptive_microlensing import BankCorruptError, BankLockedError, storage
 from adaptive_microlensing.storage import (
     ENTRY_COLUMNS,
     RegionLock,
@@ -195,6 +196,21 @@ def test_region_lock_release_is_idempotent(tmp_path):
     other = RegionLock(tmp_path / ".lock")
     other.acquire()
     assert "pid=" in (tmp_path / ".lock").read_text()
+    other.release()
+
+
+def test_a_lock_that_cannot_record_its_holder_is_released_again(tmp_path, monkeypatch):
+    """If writing the holder line fails after the lock is taken, acquire gives the lock back."""
+
+    def failing_pwrite(fd, data, offset):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(storage.os, "pwrite", failing_pwrite)
+    with pytest.raises(OSError, match="No space"):
+        RegionLock(tmp_path / ".lock").acquire()
+    monkeypatch.undo()
+    other = RegionLock(tmp_path / ".lock")
+    other.acquire()
     other.release()
 
 

@@ -792,8 +792,9 @@ class RegionLock:
             message names the holder recorded in the file, or "another process" if the
             file is empty.
         OSError
-            If the lock file cannot be opened, or ``flock`` fails for any reason other
-            than the lock being held elsewhere.
+            If the lock file cannot be opened, if ``flock`` fails for any reason other
+            than the lock being held elsewhere, or if the holder line cannot be written;
+            in the last case the lock is released again.
         """
         key = self.path.resolve()
         if key in _HELD_LOCKS:
@@ -810,8 +811,13 @@ class RegionLock:
                 ) from None
             raise
         holder = f"host={socket.gethostname()} pid={os.getpid()} since={utc_now()}"
-        os.ftruncate(fd, 0)
-        os.pwrite(fd, holder.encode("utf-8"), 0)
+        try:
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, holder.encode("utf-8"), 0)
+        except BaseException:
+            # Nothing tracks the lock yet, so give it back before the error propagates.
+            _release_lock(fd, key)
+            raise
         self._fd = fd
         self._key = key
         _HELD_LOCKS.add(key)
