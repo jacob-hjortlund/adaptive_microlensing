@@ -32,15 +32,16 @@ import numpy as np
 import pandas as pd
 
 from .bank import MapBank
-from .config import BankConfig
+from .config import BankConfig, VariabilitySpec
 from .lensing import REGIONS
 from .mpd import bin_edges_from_range, finite_range
 from .storage import RegionStore, utc_now
 
 logger = logging.getLogger("adaptive_microlensing")
 
-#: Settings of the original runs (run.sh, run_map_gen.sh); they are the BankConfig defaults.
-LEGACY_CONFIG = BankConfig()
+#: Settings of the original runs (run.sh, run_map_gen.sh): the BankConfig defaults, but with
+#: the 100 bin edges, or 99 bins, of the original coarse-map and bank MPDs.
+LEGACY_CONFIG = BankConfig(variability=VariabilitySpec(n_bins=99), n_bins=99)
 #: run_map_gen.sh passed --sample-seed 42, and the script used seed = 42 + row + 1.
 LEGACY_MAP_SEED_BASE = 42
 #: Columns that every ``{region}_data.csv`` must have.
@@ -255,7 +256,7 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
        its finite magnitude range, which gives the entry's ``mag_min`` and ``mag_max``.
        Progress is logged at INFO level. The region's entries (one per CSV row) are then
        committed, with NaN rows in place of their MPDs.
-    4. One set of ``LEGACY_CONFIG.n_bin_edges`` bin edges is made from the smallest
+    4. One set of ``LEGACY_CONFIG.n_bins + 1`` bin edges is made from the smallest
        ``mag_min`` and the largest ``mag_max`` of the valid maps of all three regions, as
        in the original query script. Each region is finalized with these edges, which
        computes the MPDs of its valid maps; a region without valid rows is finalized with
@@ -302,7 +303,7 @@ def import_legacy_bank(source: str | Path, destination: str | Path) -> MapBank:
             if rows.size:
                 minima.append(float(entries.loc[rows, "mag_min"].min()))
                 maxima.append(float(entries.loc[rows, "mag_max"].max()))
-        edges = bin_edges_from_range(min(minima), max(maxima), LEGACY_CONFIG.n_bin_edges)
+        edges = bin_edges_from_range(min(minima), max(maxima), LEGACY_CONFIG.n_bins)
         for region in REGIONS:
             bank._finalize_with_edges(region, edges)
     except BaseException:

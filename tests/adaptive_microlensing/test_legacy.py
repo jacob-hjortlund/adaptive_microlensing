@@ -6,8 +6,8 @@ import pytest
 from adaptive_microlensing import MapBank, MapSpec, SyntheticGenerator, import_legacy_bank, legacy
 from adaptive_microlensing.legacy import LEGACY_CONFIG
 from adaptive_microlensing.lensing import REGIONS, classify_image, in_domain
-from adaptive_microlensing.mpd import finite_range
-from legacy_reference import determine_common_bin_edges, legacy_query_table
+from adaptive_microlensing.mpd import finite_range, intrinsic_quantile
+from legacy_reference import determine_common_bin_edges, legacy_query_table, mpd_distance_quantile
 
 # Column order of the original {region}_data.csv files.
 LEGACY_COLUMNS = [
@@ -127,6 +127,21 @@ def test_import_registers_entries_and_links_maps(imported, legacy_source):
     assert link.resolve() == (legacy_source / "maps" / "saddle" / "microlensing_map_0003.npy").resolve()
     edges = [json.loads((imported.path / r / "region.json").read_text())["bin_edges"] for r in REGIONS]
     assert edges[0] == edges[1] == edges[2]
+
+
+def test_legacy_config_measures_variability_as_the_original_runs():
+    """Maps added to an imported bank get their quantile on the original 100 coarse-map bin edges."""
+    rng = np.random.default_rng(3)
+    mag_map = rng.normal(0.3, 0.4, size=(1600, 1600))
+    expected, _, _ = mpd_distance_quantile(
+        mag_map,
+        N=160.0,
+        M=20.0,
+        dL=0.1,
+        bin_edges=np.linspace(mag_map.min(), mag_map.max(), 100),
+        quantile=0.95,
+    )
+    assert intrinsic_quantile(mag_map, LEGACY_CONFIG.variability) == pytest.approx(expected, rel=1e-12)
 
 
 def test_query_matches_the_original_query_script(imported, legacy_source):

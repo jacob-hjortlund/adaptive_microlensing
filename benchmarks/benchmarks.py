@@ -22,9 +22,9 @@ from adaptive_microlensing.mpd import pairwise_js_distances
 
 def _config():
     return BankConfig(
-        variability=VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bin_edges=12),
+        variability=VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bins=11),
         bank_map=MapSpec(2.0, 0.05),
-        n_bin_edges=12,
+        n_bins=11,
         generator=GeneratorSpec.from_generator(SyntheticGenerator()),
     )
 

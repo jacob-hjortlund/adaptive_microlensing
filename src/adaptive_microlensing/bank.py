@@ -642,7 +642,7 @@ class MapBank:
     def finalize(self, region: str) -> None:
         """Freeze the region's bank-MPD bin edges and compute the MPDs of its maps.
 
-        The ``BankConfig.n_bin_edges`` edges span the smallest ``mag_min`` to the largest
+        The ``BankConfig.n_bins + 1`` edges span the smallest ``mag_min`` to the largest
         ``mag_max`` of the region's valid entries, widened by one ulp at each end. Every
         valid entry's bank map is histogrammed on them, ``mpds.npy`` is written, and then
         ``region.json`` records the edges and marks the region finalized. A region answers
@@ -674,7 +674,7 @@ class MapBank:
         edges = bin_edges_from_range(
             float(state.entries.loc[valid, "mag_min"].min()),
             float(state.entries.loc[valid, "mag_max"].max()),
-            self._config.n_bin_edges,
+            self._config.n_bins,
         )
         self._finalize_with_edges(region, edges)
 

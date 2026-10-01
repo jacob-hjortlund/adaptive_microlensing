@@ -51,7 +51,7 @@ UNUSABLE_BANK_JSON = {
         **meta,
         "config": {key: value for key, value in meta["config"].items() if key != "seed"},
     },
-    "an invalid config value": lambda meta: {**meta, "config": {**meta["config"], "n_bin_edges": 1}},
+    "an invalid config value": lambda meta: {**meta, "config": {**meta["config"], "n_bins": 0}},
     "an unknown config field": lambda meta: {
         **meta,
         "config": {**meta["config"], "domain": {**meta["config"]["domain"], "bogus": 1}},
@@ -102,6 +102,7 @@ def test_finalize_freezes_edges_and_computes_mpds(tetra_bank):
     assert meta["finalized"] is True
     assert len(meta["bin_edges"]) == 12
     entries = tetra_bank.entries("minima")
+    assert state.mpds.shape == (len(entries), 13)
     assert meta["bin_edges"][0] < entries["mag_min"].min()
     assert meta["bin_edges"][-1] > entries["mag_max"].max()
     np.testing.assert_allclose(state.mpds.sum(axis=1), 1.0)

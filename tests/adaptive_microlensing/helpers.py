@@ -27,12 +27,12 @@ PATCH_BOX = [[0.2, 0.45], [0.1, 0.35], [0.3, 0.7]]
 
 
 def small_config(generator: SyntheticGenerator | None = None, **overrides: Any) -> BankConfig:
-    """A bank configuration with 80 x 80 synthetic maps and 12 bin edges, fast enough for tests."""
+    """A bank configuration with 80 x 80 synthetic maps and 11 bins, fast enough for tests."""
     generator = SyntheticGenerator() if generator is None else generator
     settings: dict[str, Any] = {
-        "variability": VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bin_edges=12),
+        "variability": VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bins=11),
         "bank_map": MapSpec(2.0, 0.05),
-        "n_bin_edges": 12,
+        "n_bins": 11,
         "generator": GeneratorSpec.from_generator(generator),
     }
     settings.update(overrides)

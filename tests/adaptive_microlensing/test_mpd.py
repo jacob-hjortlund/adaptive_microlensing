@@ -12,7 +12,7 @@ from adaptive_microlensing.mpd import (
 from legacy_reference import mpd_distance_quantile
 from scipy.spatial.distance import jensenshannon
 
-SPEC = VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bin_edges=12)
+SPEC = VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.0, n_bins=11)
 
 
 def test_finite_range_ignores_non_finite_pixels_and_chunks():
@@ -29,13 +29,13 @@ def test_finite_range_ignores_non_finite_pixels_and_chunks():
 
 
 def test_bin_edges_from_range_widens_by_one_ulp():
-    """Bin edges are widened by one ulp at each end."""
-    edges = bin_edges_from_range(-1.0, 2.0, 5)
+    """Four bins have five edges, widened by one ulp at each end."""
+    edges = bin_edges_from_range(-1.0, 2.0, 4)
     assert len(edges) == 5
     assert edges[0] == np.nextafter(-1.0, -np.inf)
     assert edges[-1] == np.nextafter(2.0, np.inf)
     with pytest.raises(ValueError, match="minimum < maximum"):
-        bin_edges_from_range(1.0, 1.0, 5)
+        bin_edges_from_range(1.0, 1.0, 4)
 
 
 def test_histogram_with_overflow():

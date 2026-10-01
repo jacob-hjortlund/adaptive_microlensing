@@ -71,8 +71,8 @@ def finite_range(mag_map: np.ndarray, *, chunk_rows: int = CHUNK_ROWS) -> tuple[
     return float(minimum), float(maximum)
 
 
-def bin_edges_from_range(minimum: float, maximum: float, n_bin_edges: int) -> np.ndarray:
-    """Return ``n_bin_edges`` evenly spaced edges covering [minimum, maximum], widened by one ulp at each end.
+def bin_edges_from_range(minimum: float, maximum: float, n_bins: int) -> np.ndarray:
+    """Return the edges of ``n_bins`` equal bins covering [minimum, maximum], widened by one ulp at each end.
 
     The first edge is the float just below ``minimum`` and the last is the float just
     above ``maximum``, so both extremes lie strictly inside the edges.
@@ -85,14 +85,14 @@ def bin_edges_from_range(minimum: float, maximum: float, n_bin_edges: int) -> np
         Smallest value to cover.
     maximum : float
         Largest value to cover.
-    n_bin_edges : int
-        Number of edges, which gives ``n_bin_edges - 1`` bins. The bank passes
-        ``BankConfig.n_bin_edges``.
+    n_bins : int
+        Number of bins, which have ``n_bins + 1`` edges. The bank passes
+        ``BankConfig.n_bins``.
 
     Returns
     -------
     numpy.ndarray
-        Float array of shape ``(n_bin_edges,)`` of evenly spaced edges.
+        Float array of shape ``(n_bins + 1,)`` of evenly spaced edges.
 
     Raises
     ------
@@ -103,7 +103,7 @@ def bin_edges_from_range(minimum: float, maximum: float, n_bin_edges: int) -> np
         raise ValueError(f"Expected finite minimum < maximum, got {minimum!r} and {maximum!r}.")
     lower = float(np.nextafter(minimum, -np.inf))
     upper = float(np.nextafter(maximum, np.inf))
-    return np.linspace(lower, upper, n_bin_edges)
+    return np.linspace(lower, upper, n_bins + 1)
 
 
 def _validated_edges(edges: np.ndarray) -> np.ndarray:
@@ -171,7 +171,7 @@ def histogram_with_overflow(
     -----
     The histogram bins follow :func:`numpy.histogram`: each bin is half-open,
     ``[a, b)``, except the last, which also holds the pixels equal to ``edges[-1]``.
-    With a bank's ``BankConfig.n_bin_edges`` edges, the MPD has
+    With the ``BankConfig.n_bins + 1`` edges of a bank, the MPD has
     ``BankConfig.n_mpd_columns`` entries.
     """
     edges = _validated_edges(edges)
@@ -301,8 +301,8 @@ def intrinsic_quantile(mag_map: np.ndarray, spec: VariabilitySpec) -> float:
 
     Notes
     -----
-    Each window's MPD is a :func:`numpy.histogram` of its finite pixels on
-    ``spec.n_bin_edges`` evenly spaced edges from the smallest to the largest finite
+    Each window's MPD is a :func:`numpy.histogram` of its finite pixels in
+    ``spec.n_bins`` equal bins from the smallest to the largest finite
     pixel of the whole map, divided by the window's number of finite pixels. Unlike a
     bank MPD, it has no overflow bins, since no finite pixel lies outside these edges.
     With ``W`` windows, the quantile is :func:`numpy.quantile`, with its default linear
@@ -314,7 +314,7 @@ def intrinsic_quantile(mag_map: np.ndarray, spec: VariabilitySpec) -> float:
     minimum, maximum = finite_range(mag_map)
     if minimum == maximum:
         raise InvalidMapError("The coarse map is constant.")
-    edges = np.linspace(minimum, maximum, spec.n_bin_edges)
+    edges = np.linspace(minimum, maximum, spec.n_bins + 1)
     size = spec.window_pixels
     windows = []
     for row in range(spec.windows_per_axis):

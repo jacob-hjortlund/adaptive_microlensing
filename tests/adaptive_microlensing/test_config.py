@@ -12,8 +12,8 @@ from adaptive_microlensing import (
 )
 
 
-def test_defaults_reproduce_the_original_runs():
-    """The defaults are the settings of run.sh and run_map_gen.sh."""
+def test_defaults_are_the_original_runs_with_100_bins():
+    """The defaults are the settings of run.sh and run_map_gen.sh, but with 100 bins instead of 100 edges."""
     config = BankConfig()
     assert config.domain == DomainSpec((0.05, 2.0), (0.05, 2.0), (0.01, 0.99), 100.0)
     assert config.variability.map == MapSpec(80.0, 0.1)
@@ -22,11 +22,11 @@ def test_defaults_reproduce_the_original_runs():
     assert config.variability.windows_per_axis == 8
     assert config.variability.window_pixels == 200
     assert config.variability.quantile == 0.95
-    assert config.variability.n_bin_edges == 100
+    assert config.variability.n_bins == 100
     assert config.bank_map == MapSpec(20.0, 0.01)
     assert config.bank_map.num_pixels == 4000
-    assert config.n_bin_edges == 100
-    assert config.n_mpd_columns == 101
+    assert config.n_bins == 100
+    assert config.n_mpd_columns == 102
     assert config.seed == 42
     assert config.design == DesignSpec(6, 0.05, 2.0, 0.0, None, 0.5)
     assert config.generator == GeneratorSpec("ipm", {"rectangular": True})
@@ -40,6 +40,19 @@ def test_config_round_trips_through_json():
     assert restored == config
     assert isinstance(restored.domain.kappa_range, tuple)
     assert hash(restored) == hash(config)
+
+
+def test_one_bin_is_allowed():
+    """A single bin is the smallest binning; a bank MPD then has it and the two overflow bins."""
+    assert VariabilitySpec(n_bins=1).n_bins == 1
+    assert BankConfig(n_bins=1).n_mpd_columns == 3
+
+
+def test_bank_json_stores_the_number_of_bins():
+    """to_dict() records both numbers of bins under ``n_bins``, as bank.json stores them."""
+    data = BankConfig(variability=VariabilitySpec(n_bins=5), n_bins=7).to_dict()
+    assert data["n_bins"] == 7
+    assert data["variability"]["n_bins"] == 5
 
 
 @pytest.mark.parametrize(
@@ -62,8 +75,8 @@ def test_variability_spec_rejects_bad_windows():
         VariabilitySpec(map=MapSpec(4.0, 0.1), window_half_length=1.5)
     with pytest.raises(ValueError, match="quantile"):
         VariabilitySpec(quantile=1.5)
-    with pytest.raises(ValueError, match="n_bin_edges"):
-        VariabilitySpec(n_bin_edges=1)
+    with pytest.raises(ValueError, match="n_bins"):
+        VariabilitySpec(n_bins=0)
     with pytest.raises(TypeError, match="MapSpec"):
         VariabilitySpec(map={"half_length": 80.0, "pixel_scale": 0.1})
 
@@ -122,9 +135,9 @@ def test_equal_generator_specs_hash_equally():
 
 
 def test_bank_config_rejects_bad_values():
-    """BankConfig rejects bad edge counts, seeds and field types."""
-    with pytest.raises(ValueError, match="n_bin_edges"):
-        BankConfig(n_bin_edges=1)
+    """BankConfig rejects bad bin counts, seeds and field types."""
+    with pytest.raises(ValueError, match="n_bins"):
+        BankConfig(n_bins=0)
     with pytest.raises(ValueError, match="seed"):
         BankConfig(seed=-1)
     with pytest.raises(TypeError, match="bank_map"):

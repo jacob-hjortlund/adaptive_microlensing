@@ -12,7 +12,9 @@ maps (:class:`MapSpec`), the adaptive design (:class:`DesignSpec`) and the map c
 (:class:`GeneratorSpec`). ``BankConfig`` round-trips through JSON-compatible
 dictionaries: :meth:`MapBank.create` stores :meth:`BankConfig.to_dict` in
 ``bank.json``, and :meth:`MapBank.open` reads it back with :meth:`BankConfig.from_dict`.
-The defaults reproduce the settings of the original adaptive_mpd runs.
+The defaults are the settings of the original adaptive_mpd runs, except that the MPDs have
+100 bins where the original runs had 100 bin edges; :data:`legacy.LEGACY_CONFIG` holds the
+original settings exactly.
 
 :class:`StoppingCriteria` is not stored with the bank; it is passed to
 :meth:`MapBank.build` to say when a region has enough entries.
@@ -264,7 +266,7 @@ class VariabilitySpec:
 
     Every entry gets a coarse map as well as its bank map. The coarse map is split into
     non-overlapping square windows of side ``2 * window_half_length``, and each window's
-    magnitudes are histogrammed on ``n_bin_edges`` edges spanning the map's finite range.
+    magnitudes are histogrammed in ``n_bins`` equal bins spanning the map's finite range.
     The quantile is taken over the Jensen-Shannon distances between the MPDs of all window
     pairs (:func:`mpd.intrinsic_quantile`). It is the entry's own noise level in the hit
     rule. The coarse map is not stored.
@@ -281,20 +283,20 @@ class VariabilitySpec:
         map.
     quantile : float, optional
         Quantile, in [0, 1], of the window-pair distances. Default is ``0.95``.
-    n_bin_edges : int, optional
-        Number of bin edges of the window MPDs, at least 2. The edges are evenly spaced over
-        the coarse map's finite magnitude range. Default is ``100``.
+    n_bins : int, optional
+        Number of bins of the window MPDs, at least 1. Their ``n_bins + 1`` edges are evenly
+        spaced over the coarse map's finite magnitude range. Default is ``100``.
     """
 
     map: MapSpec = field(default_factory=lambda: MapSpec(80.0, 0.1))
     window_half_length: float = 10.0
     quantile: float = 0.95
-    n_bin_edges: int = 100
+    n_bins: int = 100
 
     def __post_init__(self) -> None:
         """Validate the fields and convert them to their canonical types.
 
-        ``window_half_length`` and ``quantile`` become floats and ``n_bin_edges`` an int.
+        ``window_half_length`` and ``quantile`` become floats and ``n_bins`` an int.
 
         Raises
         ------
@@ -305,7 +307,7 @@ class VariabilitySpec:
             ``2 * window_half_length / map.pixel_scale``, or the number of windows per axis,
             ``map.width / (2 * window_half_length)``, is not a positive integer within a
             relative 1e-9; if there are fewer than 2 windows per axis; if ``quantile`` does not
-            lie in [0, 1]; or if ``n_bin_edges`` is not an integer of at least 2.
+            lie in [0, 1]; or if ``n_bins`` is not an integer of at least 1.
         """
         if not isinstance(self.map, MapSpec):
             raise TypeError(f"VariabilitySpec.map must be a MapSpec, got {type(self.map).__name__}.")
@@ -318,9 +320,7 @@ class VariabilitySpec:
         if not 0.0 <= quantile <= 1.0:
             raise ValueError(f"VariabilitySpec.quantile must lie in [0, 1], got {self.quantile!r}.")
         object.__setattr__(self, "quantile", quantile)
-        object.__setattr__(
-            self, "n_bin_edges", _integer_at_least(self.n_bin_edges, 2, "VariabilitySpec.n_bin_edges")
-        )
+        object.__setattr__(self, "n_bins", _integer_at_least(self.n_bins, 1, "VariabilitySpec.n_bins"))
 
     @property
     def window_pixels(self) -> int:
@@ -579,7 +579,8 @@ class BankConfig:
 
     The config is written to ``bank.json`` when the bank is created and read back every
     time it is opened, so all entries of a bank are made with the same settings. The
-    defaults reproduce the settings of the original adaptive_mpd runs.
+    defaults are the settings of the original adaptive_mpd runs apart from the numbers of
+    bins, which the original runs set as 100 bin edges (:data:`legacy.LEGACY_CONFIG`).
 
     Parameters
     ----------
@@ -591,10 +592,10 @@ class BankConfig:
     bank_map : MapSpec, optional
         Geometry of the bank map that is stored and returned for each entry. Default is
         ``MapSpec(20.0, 0.01)``: 40 Einstein radii across, in 4000 pixels.
-    n_bin_edges : int, optional
-        Number of bin edges of the bank MPDs, at least 2. :meth:`MapBank.finalize` spaces
-        them evenly over the finite magnitude range of the region's valid bank maps and
-        freezes them. Default is ``100``.
+    n_bins : int, optional
+        Number of bins of the bank MPDs between their underflow and overflow bins, at least 1.
+        :meth:`MapBank.finalize` spaces their ``n_bins + 1`` edges evenly over the finite
+        magnitude range of the region's valid bank maps and freezes them. Default is ``100``.
     seed : int, optional
         Non-negative base seed. The seeds of each entry's coarse map and bank map are
         derived from it, the region and the entry ID (:func:`bank.entry_seeds`). Default
@@ -609,13 +610,13 @@ class BankConfig:
     domain: DomainSpec = field(default_factory=DomainSpec)
     variability: VariabilitySpec = field(default_factory=VariabilitySpec)
     bank_map: MapSpec = field(default_factory=lambda: MapSpec(20.0, 0.01))
-    n_bin_edges: int = 100
+    n_bins: int = 100
     seed: int = 42
     design: DesignSpec = field(default_factory=DesignSpec)
     generator: GeneratorSpec = field(default_factory=GeneratorSpec)
 
     def __post_init__(self) -> None:
-        """Validate the fields and convert ``n_bin_edges`` and ``seed`` to ints.
+        """Validate the fields and convert ``n_bins`` and ``seed`` to ints.
 
         The nested specs validate themselves when they are constructed, so only their types
         are checked here.
@@ -627,7 +628,7 @@ class BankConfig:
             :class:`DomainSpec`, :class:`VariabilitySpec`, :class:`MapSpec`,
             :class:`DesignSpec` or :class:`GeneratorSpec` respectively.
         ValueError
-            If ``n_bin_edges`` is not an integer of at least 2, or if ``seed`` is not a
+            If ``n_bins`` is not an integer of at least 1, or if ``seed`` is not a
             non-negative integer.
         """
         for name, kind in (
@@ -639,18 +640,16 @@ class BankConfig:
         ):
             if not isinstance(getattr(self, name), kind):
                 raise TypeError(f"BankConfig.{name} must be a {kind.__name__}.")
-        object.__setattr__(
-            self, "n_bin_edges", _integer_at_least(self.n_bin_edges, 2, "BankConfig.n_bin_edges")
-        )
+        object.__setattr__(self, "n_bins", _integer_at_least(self.n_bins, 1, "BankConfig.n_bins"))
         object.__setattr__(self, "seed", _integer_at_least(self.seed, 0, "BankConfig.seed"))
 
     @property
     def n_mpd_columns(self) -> int:
-        """Length of a bank MPD: ``n_bin_edges - 1`` bins plus two overflow bins.
+        """Length of a bank MPD: ``n_bins`` bins plus the underflow and overflow bins.
 
         It is also the number of columns of each region's ``mpds.npy``.
         """
-        return self.n_bin_edges + 1
+        return self.n_bins + 2
 
     def to_dict(self) -> dict[str, Any]:
         """Return the config as a JSON-compatible dictionary; tuples become lists.
@@ -661,7 +660,7 @@ class BankConfig:
         Returns
         -------
         dict of str to Any
-            The fields ``domain``, ``variability``, ``bank_map``, ``n_bin_edges``, ``seed``,
+            The fields ``domain``, ``variability``, ``bank_map``, ``n_bins``, ``seed``,
             ``design`` and ``generator``. Each spec becomes a dictionary of its own fields,
             with the coarse map nested under ``variability["map"]``.
         """
@@ -692,7 +691,7 @@ class BankConfig:
         ------
         KeyError
             If one of ``domain``, ``variability``, ``variability["map"]``, ``bank_map``,
-            ``n_bin_edges``, ``seed``, ``design`` or ``generator`` is missing.
+            ``n_bins``, ``seed``, ``design`` or ``generator`` is missing.
         TypeError
             If a section has a key its spec does not accept, or a map section lacks
             ``half_length`` or ``pixel_scale``.
@@ -704,7 +703,7 @@ class BankConfig:
             domain=DomainSpec(**data["domain"]),
             variability=VariabilitySpec(map=MapSpec(**variability.pop("map")), **variability),
             bank_map=MapSpec(**data["bank_map"]),
-            n_bin_edges=data["n_bin_edges"],
+            n_bins=data["n_bins"],
             seed=data["seed"],
             design=DesignSpec(**data["design"]),
             generator=GeneratorSpec(**data["generator"]),
