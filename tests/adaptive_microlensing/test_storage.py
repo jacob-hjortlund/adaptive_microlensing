@@ -2,6 +2,7 @@ import errno
 import io
 import math
 import os
+import zipfile
 
 import numpy as np
 import pandas as pd
@@ -258,12 +259,26 @@ def _npy_bytes(array):
     return buffer.getvalue()
 
 
+def _corrupt_deflate_stream(path):
+    """Overwrite the first bytes of the compressed ``counts.npy`` member with 0xFF."""
+    with zipfile.ZipFile(path) as archive:
+        info = archive.getinfo("counts.npy")
+    data = bytearray(path.read_bytes())
+    header = info.header_offset
+    name_length = int.from_bytes(data[header + 26 : header + 28], "little")
+    extra_length = int.from_bytes(data[header + 28 : header + 30], "little")
+    first = header + 30 + name_length + extra_length
+    data[first : first + 4] = b"\xff" * 4
+    path.write_bytes(bytes(data))
+
+
 CORRUPT_WINDOW_FILES = {
     "missing": lambda path: path.unlink(),
     "garbage": lambda path: path.write_bytes(b"not an npz file"),
     "truncated": lambda path: path.write_bytes(path.read_bytes()[:40]),
     "a plain npy": lambda path: path.write_bytes(_npy_bytes(np.zeros(3))),
     "without counts": lambda path: np.savez(path, start=np.int64(0)),
+    "corrupt deflate stream": _corrupt_deflate_stream,
     "float counts": lambda path: np.savez(path, start=np.int64(0), counts=np.zeros((2, 2))),
 }
 

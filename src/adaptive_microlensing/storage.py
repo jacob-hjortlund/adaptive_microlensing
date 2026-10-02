@@ -7,7 +7,8 @@ then ``entries.csv``. An entry exists only once its row is in ``entries.csv``.
 A bank directory holds ``bank.json``, which :meth:`~adaptive_microlensing.bank.MapBank.create`
 writes with the schema version, the creation time, the package and dependency versions
 and the :class:`~adaptive_microlensing.config.BankConfig`, and one directory per region,
-named after it (``minima``, ``saddle`` and ``maxima``). A region directory holds:
+named after it (``minima``, ``saddle`` and ``maxima``). This is layout version
+:data:`SCHEMA_VERSION`, 2; banks of version 1 are refused. A region directory holds:
 
 - ``region.json``: the schema version, the region's name, whether it is finalized, its
   frozen MPD bin edges (``null`` until then) and the time it was finalized.
@@ -80,6 +81,7 @@ import os
 import socket
 import weakref
 import zipfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -823,7 +825,7 @@ class RegionStore:
             archive = np.load(path, allow_pickle=False)
         except FileNotFoundError as exc:
             raise BankCorruptError(f"Missing window histograms {path}.") from exc
-        except (ValueError, OSError, EOFError, zipfile.BadZipFile) as exc:
+        except (ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
             raise BankCorruptError(f"Unreadable window histograms in {path}: {exc}") from exc
         if not isinstance(archive, np.lib.npyio.NpzFile):
             raise BankCorruptError(f"{path} is not an .npz archive of window histograms.")
@@ -831,7 +833,7 @@ class RegionStore:
             try:
                 start = archive["start"]
                 counts = archive["counts"]
-            except (KeyError, ValueError, OSError, EOFError, zipfile.BadZipFile) as exc:
+            except (KeyError, ValueError, OSError, EOFError, zipfile.BadZipFile, zlib.error) as exc:
                 raise BankCorruptError(f"Unreadable window histograms in {path}: {exc}") from exc
         if (
             start.ndim != 0
