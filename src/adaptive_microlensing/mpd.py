@@ -10,8 +10,14 @@ measured on the region's valid bank maps.
 MPDs are compared by their Jensen-Shannon distance in base 2 (:func:`js_distances`),
 which lies in [0, 1]. :class:`~adaptive_microlensing.interpolation.RegionIndex` keeps the
 distances between the MPDs of all valid entries (:func:`pairwise_js_distances`) for the
-hit rule. :func:`intrinsic_quantile` measures an entry's own noise level on its coarse
-map, and the bank stores it with every new entry.
+hit rule.
+
+An entry's own noise level, its intrinsic quantile, is measured on the windows of its
+coarse map. :func:`intrinsic_quantile` measures it on the coarse map's own magnitude
+range, the provisional value used while a region is built. :func:`window_histograms`
+bins every window on a fine magnitude grid, which the bank stores with the entry, and
+:func:`window_mpds` and :func:`window_quantile` turn those histograms into the quantile on
+any bin edges, such as a region's frozen ones.
 
 :func:`finite_range` and :func:`histogram_with_overflow` read a map a block of rows at a
 time, so a memory-mapped bank map is never loaded whole.
@@ -306,7 +312,8 @@ def intrinsic_quantile(mag_map: np.ndarray, spec: VariabilitySpec) -> float:
     pixel of the whole map, divided by the window's number of finite pixels. Unlike a
     bank MPD, it has no overflow bins, since no finite pixel lies outside these edges.
     With ``W`` windows, the quantile is :func:`numpy.quantile`, with its default linear
-    method, of the ``W * (W - 1) / 2`` distances between distinct windows.
+    method, of the ``W * (W - 1) / 2`` distances between distinct windows, computed by
+    :func:`window_quantile`.
     """
     n = spec.map.num_pixels
     if mag_map.shape != (n, n):
@@ -324,6 +331,149 @@ def intrinsic_quantile(mag_map: np.ndarray, spec: VariabilitySpec) -> float:
             if values.size == 0:
                 raise InvalidMapError("A coarse-map window contains no finite pixels.")
             windows.append(np.histogram(values, bins=edges)[0] / values.size)
-    mpds = np.asarray(windows)
+    return window_quantile(np.asarray(windows), spec.quantile)
+
+
+def window_histograms(mag_map: np.ndarray, spec: VariabilitySpec) -> tuple[int, np.ndarray]:
+    """Histogram every window of a coarse map on the grid of ``spec.histogram_bin_width``.
+
+    The map is cut into windows exactly as in :func:`intrinsic_quantile`. With
+    ``w = spec.histogram_bin_width``, grid bin ``b`` holds the magnitudes in
+    ``[b * w, (b + 1) * w)``, so a finite pixel of magnitude ``m`` falls in bin
+    ``floor(m / w)``. The grid has no ends; only the bins between the map's smallest and
+    largest finite pixel are returned. The bank stores the result with each entry, and
+    :func:`window_mpds` turns it into window MPDs on any bin edges.
+
+    Parameters
+    ----------
+    mag_map : numpy.ndarray
+        Coarse magnitude map of shape ``(n, n)``, with ``n = spec.map.num_pixels``. NaN
+        and infinite pixels are ignored.
+    spec : VariabilitySpec
+        Coarse-map geometry, window size and grid bin width.
+
+    Returns
+    -------
+    start : int
+        Grid bin of the map's smallest finite pixel, ``floor(min / w)``.
+    counts : numpy.ndarray
+        Int32 array of shape ``(spec.windows_per_axis**2, n_cols)``, windows in row-major
+        order, where ``counts[k, c]`` is the number of finite pixels of window ``k`` in grid
+        bin ``start + c`` and ``n_cols = floor(max / w) - start + 1``.
+
+    Raises
+    ------
+    ValueError
+        If ``mag_map`` does not have shape ``(n, n)``.
+    InvalidMapError
+        If the map has no finite pixels, if all its finite pixels have the same value,
+        or if a window has no finite pixels.
+    """
+    n = spec.map.num_pixels
+    if mag_map.shape != (n, n):
+        raise ValueError(f"Expected a coarse map of shape {(n, n)}, got {mag_map.shape}.")
+    minimum, maximum = finite_range(mag_map)
+    if minimum == maximum:
+        raise InvalidMapError("The coarse map is constant.")
+    values = np.asarray(mag_map)
+    finite = np.isfinite(values)
+    bins = np.floor(values[finite] / spec.histogram_bin_width).astype(np.int64)
+    start = int(bins.min())
+    n_cols = int(bins.max()) - start + 1
+    per_axis = spec.windows_per_axis
+    block = np.arange(n) // spec.window_pixels
+    window = (block[:, np.newaxis] * per_axis + block[np.newaxis, :])[finite]
+    counts = np.bincount(window * n_cols + (bins - start), minlength=per_axis**2 * n_cols)
+    counts_2d = np.asarray(counts.reshape(per_axis**2, n_cols), dtype=np.int64)
+    if np.any(counts_2d.sum(axis=1) == 0):
+        raise InvalidMapError("A coarse-map window contains no finite pixels.")
+    return start, counts_2d.astype(np.int32)
+
+
+def window_mpds(start: int, counts: np.ndarray, edges: np.ndarray, bin_width: float) -> np.ndarray:
+    """Return window MPDs on ``edges``, with underflow and overflow bins, from grid histograms.
+
+    Each edge is first moved to the nearest grid line, ``rint(edge / bin_width)``, which
+    moves it by at most half a grid bin. Grid bins below the first edge go to the
+    underflow bin, those at or above the last edge to the overflow bin, and the others to
+    the bin between the edges that enclose them. Each row is then divided by its total. The
+    layout is that of a bank MPD (:func:`histogram_with_overflow`), so on a region's frozen
+    edges the result can be compared with the region's bank MPDs.
+
+    Parameters
+    ----------
+    start : int
+        Grid bin of column 0 of ``counts``, as returned by :func:`window_histograms`.
+    counts : numpy.ndarray
+        Window histograms of shape ``(n_windows, n_cols)``, as returned by
+        :func:`window_histograms`.
+    edges : numpy.ndarray
+        Bin edges: finite, strictly increasing and at least two of them.
+    bin_width : float
+        Width of the grid bins, ``VariabilitySpec.histogram_bin_width``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Float array of shape ``(n_windows, len(edges) + 1)``: per window, the fractions of
+        its pixels below the first edge, in each of the ``len(edges) - 1`` bins, and at or
+        above the last edge. Each row sums to one.
+
+    Raises
+    ------
+    ValueError
+        If ``edges`` is not one-dimensional with at least two entries, if the edges are not
+        finite and strictly increasing, or if ``counts`` is not two-dimensional.
+    InvalidMapError
+        If a window's histogram is empty.
+
+    Notes
+    -----
+    A pixel changes bin compared with exact binning only if it lies between an edge and the
+    grid line the edge was moved to, so within half a grid bin of the edge. Edges that move
+    to the same grid line leave an empty bin between them.
+    """
+    edges = _validated_edges(edges)
+    counts = np.asarray(counts)
+    if counts.ndim != 2:
+        raise ValueError(f"Window histograms must be two-dimensional, got shape {counts.shape}.")
+    columns = np.clip(np.rint(edges / bin_width).astype(np.int64) - int(start), 0, counts.shape[1])
+    cumulative = np.zeros((counts.shape[0], counts.shape[1] + 1), dtype=np.int64)
+    cumulative[:, 1:] = np.cumsum(counts, axis=1, dtype=np.int64)
+    totals = cumulative[:, -1]
+    if np.any(totals == 0):
+        raise InvalidMapError("A window histogram contains no pixels.")
+    at_edges = cumulative[:, columns]
+    sums = np.column_stack([at_edges[:, 0], np.diff(at_edges, axis=1), totals - at_edges[:, -1]])
+    return sums / totals[:, np.newaxis]
+
+
+def window_quantile(mpds: np.ndarray, quantile: float) -> float:
+    """Return the ``quantile`` of the JS distances between all pairs of distinct window MPDs.
+
+    This is the last step of an intrinsic quantile: :func:`intrinsic_quantile` calls it on
+    the MPDs of a coarse map's windows on the map's own range, and the bank calls it on
+    :func:`window_mpds` on a region's frozen edges.
+
+    Parameters
+    ----------
+    mpds : numpy.ndarray
+        Window MPDs, one per row, of shape ``(n_windows, n_columns)``.
+    quantile : float
+        Quantile in [0, 1], taken with :func:`numpy.quantile` and its default linear method.
+
+    Returns
+    -------
+    float
+        The quantile of the ``n_windows * (n_windows - 1) / 2`` JS distances, between 0 and 1.
+
+    Raises
+    ------
+    ValueError
+        If ``mpds`` is not two-dimensional with at least two rows.
+    """
+    mpds = np.asarray(mpds, dtype=float)
+    if mpds.ndim != 2 or len(mpds) < 2:
+        raise ValueError("The quantile needs the MPDs of at least two windows, one per row.")
     distances = np.concatenate([js_distances(mpds[i], mpds[i + 1 :]) for i in range(len(mpds) - 1)])
-    return float(np.quantile(distances, spec.quantile))
+    return float(np.quantile(distances, quantile))

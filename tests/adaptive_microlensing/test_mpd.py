@@ -8,6 +8,9 @@ from adaptive_microlensing.mpd import (
     intrinsic_quantile,
     js_distances,
     pairwise_js_distances,
+    window_histograms,
+    window_mpds,
+    window_quantile,
 )
 from legacy_reference import mpd_distance_quantile
 from scipy.spatial.distance import jensenshannon
@@ -124,3 +127,92 @@ def test_intrinsic_quantile_rejects_unusable_maps():
         intrinsic_quantile(mag_map, SPEC)
     with pytest.raises(ValueError, match="shape"):
         intrinsic_quantile(np.zeros((40, 40)), SPEC)
+
+
+def _window(mag_map, index, size=20, per_axis=4):
+    """Pixels of window ``index`` (row-major) of a map cut into ``per_axis`` x ``per_axis`` windows."""
+    row, col = divmod(index, per_axis)
+    return mag_map[row * size : (row + 1) * size, col * size : (col + 1) * size]
+
+
+def test_window_histograms_bin_each_window_on_the_grid():
+    """Each row counts a window's finite pixels in grid bins floor(m / w), from the map's lowest bin."""
+    rng = np.random.default_rng(8)
+    mag_map = rng.normal(0.2, 0.5, size=(80, 80))
+    mag_map[5, 7] = np.inf
+    mag_map[60, 61] = np.nan
+    width = SPEC.histogram_bin_width
+    start, counts = window_histograms(mag_map, SPEC)
+    finite = mag_map[np.isfinite(mag_map)]
+    assert start == int(np.floor(finite.min() / width))
+    assert counts.shape == (16, int(np.floor(finite.max() / width)) - start + 1)
+    assert counts.dtype == np.int32
+    values = _window(mag_map, 6).ravel()
+    expected = np.bincount(np.floor(values / width).astype(np.int64) - start, minlength=counts.shape[1])
+    np.testing.assert_array_equal(counts[6], expected)
+    assert counts[0].sum() == 399  # the +inf pixel at (5, 7) lies in window 0
+    assert counts[15].sum() == 399  # the NaN pixel at (60, 61) lies in window 15
+    assert counts.sum() == finite.size
+
+
+def test_window_histograms_reject_what_intrinsic_quantile_rejects():
+    """Constant maps, empty windows, maps without finite pixels and wrong shapes are rejected."""
+    with pytest.raises(InvalidMapError, match="constant"):
+        window_histograms(np.zeros((80, 80)), SPEC)
+    mag_map = np.random.default_rng(7).normal(size=(80, 80))
+    mag_map[:20, :20] = np.inf
+    with pytest.raises(InvalidMapError, match="window"):
+        window_histograms(mag_map, SPEC)
+    with pytest.raises(InvalidMapError, match="no finite"):
+        window_histograms(np.full((80, 80), np.nan), SPEC)
+    with pytest.raises(ValueError, match="shape"):
+        window_histograms(np.zeros((40, 40)), SPEC)
+
+
+def test_window_mpds_on_grid_edges_match_numpy_histograms():
+    """On edges that are grid lines, window MPDs are numpy histograms plus under- and overflow."""
+    rng = np.random.default_rng(9)
+    mag_map = rng.normal(0.0, 0.6, size=(80, 80))
+    width = SPEC.histogram_bin_width
+    start, counts = window_histograms(mag_map, SPEC)
+    edges = np.arange(-500, 501, 50) * width  # -1 to +1 mag in 0.1 mag bins, all grid lines
+    mpds = window_mpds(start, counts, edges, width)
+    assert mpds.shape == (16, len(edges) + 1)
+    np.testing.assert_allclose(mpds.sum(axis=1), 1.0)
+    values = _window(mag_map, 6).ravel()
+    # Pixels beyond +-1 mag exist here, so the under- and overflow bins are tested too.
+    assert np.any(values < edges[0]) and np.any(values >= edges[-1])
+    expected = np.concatenate(
+        [[np.sum(values < edges[0])], np.histogram(values, bins=edges)[0], [np.sum(values >= edges[-1])]]
+    )
+    np.testing.assert_allclose(mpds[6], expected / values.size)
+
+
+def test_window_mpds_snap_edges_to_the_nearest_grid_line():
+    """Off-grid edges move to the nearest grid line, so only pixels within a grid bin of an edge move."""
+    rng = np.random.default_rng(10)
+    mag_map = rng.normal(0.0, 0.6, size=(80, 80))
+    width = SPEC.histogram_bin_width
+    start, counts = window_histograms(mag_map, SPEC)
+    edges = bin_edges_from_range(-1.234567, 0.987654, 11)
+    mpds = window_mpds(start, counts, edges, width)
+    np.testing.assert_array_equal(mpds, window_mpds(start, counts, np.rint(edges / width) * width, width))
+    values = _window(mag_map, 6).ravel()
+    exact = np.concatenate(
+        [[np.sum(values < edges[0])], np.histogram(values, bins=edges)[0], [np.sum(values > edges[-1])]]
+    )
+    near_an_edge = np.sum(np.min(np.abs(values[:, None] - edges[None, :]), axis=1) < width)
+    assert np.abs(mpds[6] * values.size - exact).sum() <= 2 * near_an_edge + 1e-9
+    with pytest.raises(ValueError, match="increasing"):
+        window_mpds(start, counts, edges[::-1], width)
+
+
+def test_window_quantile_is_the_last_step_of_intrinsic_quantile():
+    """window_quantile of the window MPDs on the map's own range is intrinsic_quantile."""
+    rng = np.random.default_rng(11)
+    mag_map = rng.normal(0.3, 0.4, size=(80, 80))
+    edges = np.linspace(mag_map.min(), mag_map.max(), SPEC.n_bins + 1)
+    mpds = np.array([np.histogram(_window(mag_map, k), bins=edges)[0] / 400 for k in range(16)])
+    assert window_quantile(mpds, SPEC.quantile) == intrinsic_quantile(mag_map, SPEC)
+    with pytest.raises(ValueError, match="at least two"):
+        window_quantile(mpds[:1], SPEC.quantile)
