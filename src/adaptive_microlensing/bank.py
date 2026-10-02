@@ -20,6 +20,12 @@ entries table, MPDs and index, loaded once when the bank is opened and extended 
 commit. :func:`entry_seeds` derives each new entry's seeds from the bank's seed, the
 region and the entry ID alone.
 
+Each entry's intrinsic quantile is provisional until its region is finalized: it is
+measured on the coarse map's own magnitude range and is also kept as ``coarse_quantile``.
+:meth:`MapBank.finalize` measures it again on the region's frozen bin edges from the
+window histograms stored with each entry, and entries added afterwards are measured on
+those edges at once.
+
 The private methods ``_resolve_generator``, ``_evaluate_entry`` and ``_commit`` are shared
 with the build loop, :func:`~adaptive_microlensing.design.build_region`, and
 ``_import_entries`` and ``_finalize_with_edges`` with
@@ -54,7 +60,15 @@ from .errors import (
 from .interpolation import RegionIndex
 from .lensing import CRITICAL, REGIONS, classify_image, in_box, in_domain
 from .maps import MapGenerator, generator_from_spec, generator_identity
-from .mpd import bin_edges_from_range, finite_range, histogram_with_overflow, intrinsic_quantile
+from .mpd import (
+    bin_edges_from_range,
+    finite_range,
+    histogram_with_overflow,
+    intrinsic_quantile,
+    window_histograms,
+    window_mpds,
+    window_quantile,
+)
 from .results import (
     FETCH_COLUMNS,
     QUERY_COLUMNS,
@@ -645,10 +659,14 @@ class MapBank:
 
         The ``BankConfig.n_bins + 1`` edges span the smallest ``mag_min`` to the largest
         ``mag_max`` of the region's valid entries, widened by one ulp at each end. Every
-        valid entry's bank map is histogrammed on them, ``mpds.npy`` is written, and then
-        ``region.json`` records the edges and marks the region finalized. A region answers
+        valid entry's bank map is histogrammed on them, and every valid entry's intrinsic
+        quantile is measured again on them from its stored window histograms, so that the
+        quantiles and the distances of the hit rule use the same bins. The provisional
+        values stay in ``coarse_quantile``. ``mpds.npy``, ``entries.csv`` and then
+        ``region.json`` are written, the last recording the edges and marking the region
+        finalized. A region answers
         queries only once it is finalized. The edges never change afterwards: maps added
-        later get their MPDs on the same edges, with pixels outside them counted in the
+        later get their MPDs and quantiles on the same edges, with pixels outside them counted in the
         underflow and overflow bins. Progress is logged at ``INFO`` level.
 
         Parameters
@@ -664,6 +682,9 @@ class MapBank:
             If the region is not open for writing.
         RegionStateError
             If the region is already finalized or has no valid entries.
+        BankCorruptError
+            If a valid entry's window histograms are missing or unreadable; nothing is
+            written then.
         """
         state = self._region(region)
         self._require_writable(region)
@@ -1149,12 +1170,16 @@ class MapBank:
         """Make the maps of a new entry and write its bank map; the caller commits the row.
 
         The entry takes the next entry ID and the seeds from :func:`entry_seeds`. The coarse
-        map is made first and used only to measure the intrinsic quantile. The bank map is
+        map is made first. Its provisional quantile, on its own range, is recorded as
+        ``coarse_quantile``, and its window histograms are kept. The quantile in force,
+        ``intrinsic_quantile``, is the provisional one in an unfinalized region and is measured
+        from the window histograms on the frozen edges in a finalized one. The bank map is
         made next, checked for its shape and for finite pixels, histogrammed on the frozen
-        bin edges if the region is finalized, and written to ``maps/`` (commit step 1). If
-        the generator raises :exc:`MapGenerationError`, or a map is rejected with
-        :exc:`InvalidMapError`, no map is written and the row is marked invalid, with
-        ``"<exception name>: <message>"`` in its ``error`` column.
+        bin edges if the region is finalized, and written to ``maps/``, with the window
+        histograms written to ``windows/`` (commit step 1). If the generator
+        raises :exc:`MapGenerationError`, or a map is rejected with :exc:`InvalidMapError`, no
+        map is written and the row is marked invalid, with ``"<exception name>: <message>"``
+        in its ``error`` column.
 
         Parameters
         ----------
@@ -1217,9 +1242,11 @@ class MapBank:
             "max_residual": math.nan,
         }
         mpd = np.full(self._config.n_mpd_columns, np.nan)
+        spec = self._config.variability
         try:
-            coarse = generator.generate(kappa, gamma, s, self._config.variability.map, variability_seed)
-            quantile = intrinsic_quantile(coarse, self._config.variability)
+            coarse = generator.generate(kappa, gamma, s, spec.map, variability_seed)
+            coarse_quantile = intrinsic_quantile(coarse, spec)
+            start, counts = window_histograms(coarse, spec)
             del coarse
             bank_map = generator.generate(kappa, gamma, s, self._config.bank_map, map_seed)
             n = self._config.bank_map.num_pixels
@@ -1230,6 +1257,11 @@ class MapBank:
             mag_min, mag_max = finite_range(bank_map)
             if state.finalized:
                 mpd = histogram_with_overflow(bank_map, state.bin_edges)
+                edges_mpds = window_mpds(start, counts, state.bin_edges, spec.histogram_bin_width)
+                quantile = window_quantile(edges_mpds, spec.quantile)
+            else:
+                quantile = coarse_quantile
+            row["window_file"] = state.store.write_windows(entry_id, start, counts)
             row["map_file"] = state.store.write_map(entry_id, bank_map)
         except (MapGenerationError, InvalidMapError) as exc:
             row["error"] = f"{type(exc).__name__}: {exc}"
@@ -1238,7 +1270,7 @@ class MapBank:
             row.update(
                 valid=True,
                 intrinsic_quantile=quantile,
-                coarse_quantile=quantile,
+                coarse_quantile=coarse_quantile,
                 mag_min=mag_min,
                 mag_max=mag_max,
             )
@@ -1334,15 +1366,20 @@ class MapBank:
         state.index = state.build_index()
 
     def _finalize_with_edges(self, region: str, edges: np.ndarray) -> None:
-        """Compute every valid entry's MPD against ``edges`` and mark the region finalized.
+        """Compute every valid entry's MPD and quantile against ``edges`` and mark the region finalized.
 
         Each valid entry's bank map is read memory-mapped and histogrammed with underflow
-        and overflow bins, with progress logged at ``INFO`` level. ``mpds.npy`` is written
-        first and ``region.json`` second, so a crash in between leaves the region
-        unfinalized. The in-memory state is then updated and the index rebuilt with the
-        MPDs, which computes the JS distances between all pairs of valid entries. Unlike
-        :meth:`finalize`, this does not check whether the region is already finalized; the
-        legacy import uses it to give every region the same edges.
+        and overflow bins. Each valid entry with window histograms gets its intrinsic quantile
+        measured again from them on ``edges`` (:func:`~adaptive_microlensing.mpd.window_mpds`),
+        so that it uses the same bins as the distances between bank MPDs; an entry without
+        them, such as a legacy entry, keeps its ``coarse_quantile``. Progress is logged at
+        ``INFO`` level. Every file is read before anything is written. Then ``mpds.npy``,
+        ``entries.csv`` and ``region.json`` are written in that order
+        (:meth:`RegionStore.write_finalized`), so a crash before the last leaves the region
+        unfinalized. The in-memory state is then updated and the index rebuilt with the MPDs
+        and the new quantiles, which computes the JS distances between all pairs of valid
+        entries. Unlike :meth:`finalize`, this does not check whether the region is already
+        finalized; the legacy import uses it to give every region the same edges.
 
         Parameters
         ----------
@@ -1360,24 +1397,35 @@ class MapBank:
             If the region is not open for writing.
         InvalidMapError
             If a valid entry's bank map has no finite pixels.
+        BankCorruptError
+            If a valid entry's window histograms are missing or unreadable. Nothing is
+            written then.
         """
         state = self._region(region)
         self._require_writable(region)
+        spec = self._config.variability
         mpds = np.full((len(state.entries), self._config.n_mpd_columns), np.nan)
+        quantiles = state.entries["coarse_quantile"].to_numpy(dtype=float).copy()
         rows = np.flatnonzero(state.entries["valid"].to_numpy(dtype=bool))
         for position, row in enumerate(rows, start=1):
             path = state.store.directory / str(state.entries["map_file"].iloc[row])
             mpds[row] = histogram_with_overflow(np.load(path, mmap_mode="r"), edges)
+            window_file = str(state.entries["window_file"].iloc[row])
+            if window_file:
+                start, counts = state.store.read_windows(window_file)
+                window_edges_mpds = window_mpds(start, counts, edges, spec.histogram_bin_width)
+                quantiles[row] = window_quantile(window_edges_mpds, spec.quantile)
             if position == len(rows) or position % max(1, len(rows) // 10) == 0:
-                logger.info("%s: MPDs %d/%d", region, position, len(rows))
-        state.store.write_mpds(mpds)
+                logger.info("%s: MPDs and quantiles %d/%d", region, position, len(rows))
+        entries = state.entries.assign(intrinsic_quantile=quantiles)
         meta = {
             **state.meta,
             "finalized": True,
             "bin_edges": [float(edge) for edge in edges],
             "finalized_at": utc_now(),
         }
-        state.store.write_meta(meta)
+        state.store.write_finalized(entries, mpds, meta)
+        state.entries = entries
         state.mpds = mpds
         state.meta = meta
         state.index = state.build_index()

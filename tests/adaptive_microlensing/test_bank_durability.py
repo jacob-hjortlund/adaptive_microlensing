@@ -3,10 +3,11 @@ import subprocess
 import sys
 
 import numpy as np
+import pandas as pd
 import pytest
 from adaptive_microlensing import BankLockedError, MapBank, storage
 from adaptive_microlensing.storage import RegionStore
-from helpers import CENTROID, add_entry
+from helpers import CENTROID, TETRAHEDRON, add_entry
 
 
 def test_crash_after_writing_the_map_leaves_the_bank_unchanged(tetra_bank, monkeypatch, generator):
@@ -88,3 +89,27 @@ def test_a_dropped_writable_bank_releases_its_locks(config, tmp_path):
     gc.collect()
     reopened = MapBank.open(tmp_path / "dropped", writable=True)
     reopened.close()
+
+
+def test_crash_before_region_json_leaves_the_region_unfinalized(bank, generator, monkeypatch):
+    """A finalize that stops after entries.csv but before region.json is undone on reopening."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point, generator)
+    provisional = bank.entries("minima")["coarse_quantile"].to_numpy()
+
+    def crash(*args, **kwargs):
+        raise OSError("simulated crash")
+
+    monkeypatch.setattr(RegionStore, "write_meta", crash)
+    with pytest.raises(OSError, match="simulated"):
+        bank.finalize("minima")
+    monkeypatch.undo()
+    on_disk = pd.read_csv(bank.path / "minima" / "entries.csv")
+    assert not np.allclose(on_disk["intrinsic_quantile"], provisional)
+    path = bank.path
+    bank.close()
+    with MapBank.open(path, writable=True) as reopened:
+        assert not reopened._regions["minima"].finalized
+        np.testing.assert_array_equal(reopened.entries("minima")["intrinsic_quantile"], provisional)
+        reopened.finalize("minima")
+        assert reopened._regions["minima"].finalized

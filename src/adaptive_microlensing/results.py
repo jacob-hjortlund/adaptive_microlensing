@@ -153,8 +153,8 @@ class BankEntry:
         Smooth-matter fraction of the entry.
     intrinsic_quantile : float
         The entry's noise level in the hit rule: a quantile of the Jensen-Shannon distances
-        between windows of its coarse map. For a legacy entry it is the original
-        ``mpd_distance``.
+        between windows of its coarse map, measured on its region's frozen bin edges. For a
+        legacy entry it is the original ``mpd_distance``.
     map_path : pathlib.Path
         Absolute path of the bank map file, ``maps/map_XXXXXX.npy`` in the region directory.
         For a legacy entry it is a symbolic link to the original map.

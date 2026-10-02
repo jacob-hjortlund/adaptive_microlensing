@@ -7,7 +7,10 @@ loss. It samples inside the region's design hull (:func:`region_convex_hull`) an
 for the hull's vertices first.
 
 The learner's value at a point is ``[intrinsic_quantile, 1]`` for a valid entry and
-``[0, 0]`` for an invalid one. The loss, :func:`failure_aware_curvature_loss`, reads the
+``[0, 0]`` for an invalid one. The ``intrinsic_quantile`` is the quantile in force: the
+provisional one on the coarse map's own range while the region is unfinalized, and the one
+on the frozen edges afterwards, so a build works with one kind throughout and its residuals
+compare like with like. The loss, :func:`failure_aware_curvature_loss`, reads the
 second component as a validity flag. A simplex whose vertices are all valid gets
 ``adaptive``'s curvature loss of the intrinsic quantile, which is large where the
 quantile is curved or the simplex is large. A simplex that straddles the validity

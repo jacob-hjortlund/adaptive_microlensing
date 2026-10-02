@@ -124,3 +124,25 @@ def test_build_preconditions(tmp_path, bank, generator):
     bank.close()
     with MapBank.open(path) as reader, pytest.raises(BankReadOnlyError):
         reader.build("minima", StoppingCriteria(max_valid_points=5))
+
+
+def test_a_build_on_a_finalized_region_works_with_frozen_edge_quantiles(bank, monkeypatch):
+    """After finalize, the learner is told the frozen-edge quantiles, and new entries get them too."""
+    bank.build("minima", StoppingCriteria(max_valid_points=12))
+    bank.finalize("minima")
+    first_new = len(bank.entries("minima"))
+    told = {}
+    original_tell = adaptive.LearnerND.tell
+
+    def recording_tell(self, point, value):
+        told[tuple(point)] = float(value[0])
+        return original_tell(self, point, value)
+
+    monkeypatch.setattr(adaptive.LearnerND, "tell", recording_tell)
+    bank.build("minima", StoppingCriteria(max_valid_points=14))
+    entries = bank.entries("minima")
+    for row in entries.loc[entries["valid"]].itertuples():
+        assert told[(row.kappa, row.gamma, row.s)] == row.intrinsic_quantile
+    new = entries.iloc[first_new:]
+    assert len(new) >= 2
+    assert (new.loc[new["valid"], "intrinsic_quantile"] != new.loc[new["valid"], "coarse_quantile"]).all()

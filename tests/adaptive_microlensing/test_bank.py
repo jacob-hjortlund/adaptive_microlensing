@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pandas as pd
 import pytest
 from adaptive_microlensing import (
     BankCorruptError,
@@ -10,7 +11,9 @@ from adaptive_microlensing import (
     RegionStateError,
 )
 from adaptive_microlensing.bank import entry_seeds
+from adaptive_microlensing.mpd import intrinsic_quantile
 from helpers import CENTROID, NEAR_FIRST_VERTEX, OUTSIDE_TETRAHEDRON, TETRAHEDRON, add_entry, small_config
+from scipy.spatial.distance import jensenshannon
 
 
 def test_create_writes_bank_json_and_empty_regions(bank, config):
@@ -224,3 +227,94 @@ def test_open_refuses_a_bank_of_an_older_layout(bank):
     path.write_text(json.dumps({**meta, "schema_version": 1}))
     with pytest.raises(BankCorruptError, match=r"schema version 1.*import_legacy_bank"):
         MapBank.open(bank.path)
+
+
+def _coarse_map(bank, region, entry_id, generator):
+    """An entry's coarse map, made again from its stored variability seed."""
+    row = bank._regions[region].entries.loc[entry_id]
+    spec = bank.config.variability
+    return generator.generate(row["kappa"], row["gamma"], row["s"], spec.map, int(row["variability_seed"]))
+
+
+def _independent_frozen_edge_quantile(bank, region, entry_id, generator):
+    """An entry's quantile on its region's frozen edges, from its coarse map made again.
+
+    The edges are moved to the nearest grid line, as the bank does, and every window is
+    binned directly with numpy and compared with SciPy's Jensen-Shannon distance.
+    """
+    spec = bank.config.variability
+    width = spec.histogram_bin_width
+    edges = np.rint(bank._regions[region].bin_edges / width) * width
+    coarse = _coarse_map(bank, region, entry_id, generator)
+    size = spec.window_pixels
+    mpds = []
+    for row in range(spec.windows_per_axis):
+        for col in range(spec.windows_per_axis):
+            block = coarse[row * size : (row + 1) * size, col * size : (col + 1) * size]
+            values = block[np.isfinite(block)]
+            inner = np.histogram(values, bins=edges)[0]
+            mpds.append(np.concatenate([[np.sum(values < edges[0])], inner, [np.sum(values > edges[-1])]]))
+    distances = [jensenshannon(p, q, base=2) for i, p in enumerate(mpds) for q in mpds[i + 1 :]]
+    return float(np.quantile(distances, spec.quantile))
+
+
+def test_entries_store_window_histograms_and_a_provisional_quantile(bank, generator):
+    """Before finalize, an entry's quantile in force is its coarse-range one, and its windows are stored."""
+    add_entry(bank, "minima", TETRAHEDRON[0], generator)
+    entries = bank.entries("minima")
+    spec = bank.config.variability
+    expected = intrinsic_quantile(_coarse_map(bank, "minima", 0, generator), spec)
+    assert entries.loc[0, "coarse_quantile"] == pytest.approx(expected, rel=1e-12)
+    assert entries.loc[0, "intrinsic_quantile"] == entries.loc[0, "coarse_quantile"]
+    assert entries.loc[0, "window_file"] == "windows/windows_000000.npz"
+    start, counts = bank._regions["minima"].store.read_windows(entries.loc[0, "window_file"])
+    assert counts.shape[0] == spec.windows_per_axis**2 == 16
+    np.testing.assert_array_equal(counts.sum(axis=1), spec.window_pixels**2)
+
+
+def test_finalize_recomputes_quantiles_on_the_frozen_edges(tetra_bank, generator):
+    """finalize() measures every quantile again on the frozen edges and keeps the provisional one."""
+    entries = tetra_bank.entries("minima")
+    spec = tetra_bank.config.variability
+    for entry_id in entries["entry_id"]:
+        frozen = _independent_frozen_edge_quantile(tetra_bank, "minima", entry_id, generator)
+        assert entries.loc[entry_id, "intrinsic_quantile"] == pytest.approx(frozen, rel=1e-9)
+        provisional = intrinsic_quantile(_coarse_map(tetra_bank, "minima", entry_id, generator), spec)
+        assert entries.loc[entry_id, "coarse_quantile"] == pytest.approx(provisional, rel=1e-12)
+    assert not np.allclose(entries["intrinsic_quantile"], entries["coarse_quantile"])
+    index = tetra_bank._regions["minima"].index
+    np.testing.assert_array_equal(index.quantiles, entries["intrinsic_quantile"].to_numpy())
+
+
+def test_entries_added_after_finalize_get_frozen_edge_quantiles(tetra_bank, generator):
+    """Entries made after finalize, directly or by fetch, are measured on the frozen edges at once."""
+    row = add_entry(tetra_bank, "minima", CENTROID, generator)
+    frozen = _independent_frozen_edge_quantile(tetra_bank, "minima", 4, generator)
+    assert row["intrinsic_quantile"] == pytest.approx(frozen, rel=1e-9)
+    assert row["coarse_quantile"] != row["intrinsic_quantile"]
+    fetched = tetra_bank.fetch(*OUTSIDE_TETRAHEDRON)
+    assert fetched.created and fetched.entry.entry_id == 5
+    frozen = _independent_frozen_edge_quantile(tetra_bank, "minima", 5, generator)
+    assert fetched.entry.intrinsic_quantile == pytest.approx(frozen, rel=1e-9)
+
+
+def test_reopened_bank_keeps_both_quantiles(tetra_bank):
+    """Both quantile columns and the window files survive closing and opening the bank."""
+    before = tetra_bank.entries("minima")
+    path = tetra_bank.path
+    tetra_bank.close()
+    with MapBank.open(path) as reader:
+        pd.testing.assert_frame_equal(reader.entries("minima"), before)
+
+
+def test_finalize_refuses_a_missing_window_file_and_writes_nothing(bank, generator):
+    """A window file lost before finalize raises BankCorruptError and leaves the region unfinalized."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point, generator)
+    (bank.path / "minima" / "windows" / "windows_000002.npz").unlink()
+    entries_before = (bank.path / "minima" / "entries.csv").read_bytes()
+    with pytest.raises(BankCorruptError, match="windows_000002"):
+        bank.finalize("minima")
+    assert not bank._regions["minima"].finalized
+    assert json.loads((bank.path / "minima" / "region.json").read_text())["finalized"] is False
+    assert (bank.path / "minima" / "entries.csv").read_bytes() == entries_before
