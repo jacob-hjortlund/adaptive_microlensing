@@ -12,8 +12,10 @@ maps (:class:`MapSpec`), the adaptive design (:class:`DesignSpec`) and the map c
 (:class:`GeneratorSpec`). ``BankConfig`` round-trips through JSON-compatible
 dictionaries: :meth:`MapBank.create` stores :meth:`BankConfig.to_dict` in
 ``bank.json``, and :meth:`MapBank.open` reads it back with :meth:`BankConfig.from_dict`.
-The defaults are the settings of the original adaptive_mpd runs, except that the MPDs have
-100 bins where the original runs had 100 bin edges; :data:`legacy.LEGACY_CONFIG` holds the
+The defaults are the settings of the original adaptive_mpd runs with three exceptions: the
+MPDs have 100 bins where the original runs had 100 bin edges, the coarse map is 320 Einstein
+radii across so that its 8 x 8 windows are as large as a bank map, and
+:class:`StoppingCriteria` has a residual goal. :data:`legacy.LEGACY_CONFIG` holds the
 original settings exactly.
 
 :class:`StoppingCriteria` is not stored with the bank; it is passed to
@@ -265,38 +267,60 @@ class VariabilitySpec:
     """How the intrinsic MPD-distance quantile is measured on a coarse map.
 
     Every entry gets a coarse map as well as its bank map. The coarse map is split into
-    non-overlapping square windows of side ``2 * window_half_length``, and each window's
-    magnitudes are histogrammed in ``n_bins`` equal bins spanning the map's finite range.
-    The quantile is taken over the Jensen-Shannon distances between the MPDs of all window
-    pairs (:func:`mpd.intrinsic_quantile`). It is the entry's own noise level in the hit
-    rule. The coarse map is not stored.
+    non-overlapping square windows of side ``2 * window_half_length``. The quantile is
+    taken over the Jensen-Shannon distances between the MPDs of all window pairs, and it is
+    the entry's own noise level in the hit rule.
+
+    It is measured twice. When the entry is made, each window's magnitudes are binned in
+    ``n_bins`` equal bins spanning the coarse map's finite range
+    (:func:`mpd.intrinsic_quantile`); this is the entry's ``coarse_quantile``, the
+    provisional value used while the region is built. Each window's magnitudes are also
+    histogrammed on a fine grid of ``histogram_bin_width`` (:func:`mpd.window_histograms`),
+    and these histograms are stored with the entry. When the region is finalized, the
+    quantile is measured again from them on the region's frozen bank-MPD edges
+    (:func:`mpd.window_mpds`), so that it uses the same bins as the distances it is
+    compared with. The coarse map itself is not stored.
+
+    The defaults cut 8 x 8 windows of 40 Einstein radii, the size of the default bank map,
+    from a coarse map 320 Einstein radii across. Its 3200 x 3200 pixels are four times
+    those of the original runs, whose 160 Einstein-radius map gave 20 Einstein-radius
+    windows (:data:`legacy.LEGACY_CONFIG`).
 
     Parameters
     ----------
     map : MapSpec, optional
-        Geometry of the coarse map. Default is ``MapSpec(80.0, 0.1)``: 160 Einstein radii
-        across, in 1600 pixels.
+        Geometry of the coarse map. Default is ``MapSpec(160.0, 0.1)``: 320 Einstein radii
+        across, in 3200 pixels.
     window_half_length : float, optional
         Half the side length of one window, in Einstein radii. The window side must be a
         whole number of coarse-map pixels, and the map side a whole number of windows, at
-        least 2. Default is ``10.0``, which gives 8 x 8 windows of 200 pixels on the default
-        map.
+        least 2. Default is ``20.0``, which gives 8 x 8 windows of 400 pixels, each as wide
+        as the default bank map, on the default map.
     quantile : float, optional
         Quantile, in [0, 1], of the window-pair distances. Default is ``0.95``.
     n_bins : int, optional
-        Number of bins of the window MPDs, at least 1. Their ``n_bins + 1`` edges are evenly
-        spaced over the coarse map's finite magnitude range. Default is ``100``.
+        Number of bins of the provisional window MPDs, at least 1. Their ``n_bins + 1``
+        edges are evenly spaced over the coarse map's finite magnitude range. Default is
+        ``100``.
+    histogram_bin_width : float, optional
+        Width, in magnitudes, of the grid on which every window's magnitudes are
+        histogrammed and stored: grid bin ``b`` holds ``[b * width, (b + 1) * width)``.
+        Edges are moved to the nearest grid line when the quantile is measured again, so
+        this is also the precision of those edges. Positive and finite. Default is
+        ``0.002``.
     """
 
-    map: MapSpec = field(default_factory=lambda: MapSpec(80.0, 0.1))
-    window_half_length: float = 10.0
+    map: MapSpec = field(default_factory=lambda: MapSpec(160.0, 0.1))
+    window_half_length: float = 20.0
     quantile: float = 0.95
     n_bins: int = 100
+    histogram_bin_width: float = 0.002
 
     def __post_init__(self) -> None:
         """Validate the fields and convert them to their canonical types.
 
-        ``window_half_length`` and ``quantile`` become floats and ``n_bins`` an int.
+        ``window_half_length``, ``quantile`` and ``histogram_bin_width`` become floats and
+        ``n_bins`` an int.
 
         Raises
         ------
@@ -307,7 +331,8 @@ class VariabilitySpec:
             ``2 * window_half_length / map.pixel_scale``, or the number of windows per axis,
             ``map.width / (2 * window_half_length)``, is not a positive integer within a
             relative 1e-9; if there are fewer than 2 windows per axis; if ``quantile`` does not
-            lie in [0, 1]; or if ``n_bins`` is not an integer of at least 1.
+            lie in [0, 1]; if ``n_bins`` is not an integer of at least 1; or if
+            ``histogram_bin_width`` is not positive and finite.
         """
         if not isinstance(self.map, MapSpec):
             raise TypeError(f"VariabilitySpec.map must be a MapSpec, got {type(self.map).__name__}.")
@@ -321,6 +346,11 @@ class VariabilitySpec:
             raise ValueError(f"VariabilitySpec.quantile must lie in [0, 1], got {self.quantile!r}.")
         object.__setattr__(self, "quantile", quantile)
         object.__setattr__(self, "n_bins", _integer_at_least(self.n_bins, 1, "VariabilitySpec.n_bins"))
+        object.__setattr__(
+            self,
+            "histogram_bin_width",
+            _finite_positive(self.histogram_bin_width, "VariabilitySpec.histogram_bin_width"),
+        )
 
     @property
     def window_pixels(self) -> int:
@@ -580,7 +610,8 @@ class BankConfig:
     The config is written to ``bank.json`` when the bank is created and read back every
     time it is opened, so all entries of a bank are made with the same settings. The
     defaults are the settings of the original adaptive_mpd runs apart from the numbers of
-    bins, which the original runs set as 100 bin edges (:data:`legacy.LEGACY_CONFIG`).
+    bins, which the original runs set as 100 bin edges, and the coarse map, whose windows
+    are now as large as a bank map (:data:`legacy.LEGACY_CONFIG` holds the originals).
 
     Parameters
     ----------
@@ -737,7 +768,9 @@ class StoppingCriteria:
         measured intrinsic quantile and ``q_pred`` the quantile interpolated from the region's
         entries before it was added; an entry that no fully valid tetrahedron contains has no
         residual. Residuals recorded by earlier builds of the region count too. Positive and
-        finite when set; ``None`` disables the criterion. Default is ``None``.
+        finite when set; ``None`` disables the criterion. Default is ``0.1``, just above the
+        scatter of the intrinsic quantile between coarse maps of one point (about 8% in the
+        coarse-window test), below which the residuals cannot fall.
     min_num_residuals : int, optional
         Number of most recent residuals that ``residual_goal`` looks at, and the number that
         must exist before it can stop the build. It also sets the window of the
@@ -747,7 +780,7 @@ class StoppingCriteria:
 
     max_valid_points: int | None = 500
     simplex_loss_goal: float | None = None
-    residual_goal: float | None = None
+    residual_goal: float | None = 0.1
     min_num_residuals: int = 100
 
     def __post_init__(self) -> None:

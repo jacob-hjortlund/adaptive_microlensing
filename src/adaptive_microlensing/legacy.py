@@ -32,16 +32,20 @@ import numpy as np
 import pandas as pd
 
 from .bank import MapBank
-from .config import BankConfig, VariabilitySpec
+from .config import BankConfig, MapSpec, VariabilitySpec
 from .lensing import REGIONS
 from .mpd import bin_edges_from_range, finite_range
 from .storage import RegionStore, utc_now
 
 logger = logging.getLogger("adaptive_microlensing")
 
-#: Settings of the original runs (run.sh, run_map_gen.sh): the BankConfig defaults, but with
-#: the 100 bin edges, or 99 bins, of the original coarse-map and bank MPDs.
-LEGACY_CONFIG = BankConfig(variability=VariabilitySpec(n_bins=99), n_bins=99)
+#: Settings of the original runs (run.sh, run_map_gen.sh): a coarse map 160 Einstein radii
+#: across cut into 8 x 8 windows of 20 Einstein radii, and the 100 bin edges, or 99 bins, of
+#: the original coarse-map and bank MPDs; otherwise the BankConfig defaults.
+LEGACY_CONFIG = BankConfig(
+    variability=VariabilitySpec(map=MapSpec(80.0, 0.1), window_half_length=10.0, n_bins=99),
+    n_bins=99,
+)
 #: run_map_gen.sh passed --sample-seed 42, and the script used seed = 42 + row + 1.
 LEGACY_MAP_SEED_BASE = 42
 #: Columns that every ``{region}_data.csv`` must have.

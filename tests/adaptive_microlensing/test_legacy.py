@@ -144,6 +144,15 @@ def test_legacy_config_measures_variability_as_the_original_runs():
     assert intrinsic_quantile(mag_map, LEGACY_CONFIG.variability) == pytest.approx(expected, rel=1e-12)
 
 
+def test_legacy_config_keeps_the_original_coarse_map_geometry():
+    """LEGACY_CONFIG keeps the original 160 R_E coarse map with 8 x 8 windows of 20 R_E."""
+    assert LEGACY_CONFIG.variability.map == MapSpec(80.0, 0.1)
+    assert LEGACY_CONFIG.variability.window_half_length == 10.0
+    assert LEGACY_CONFIG.variability.windows_per_axis == 8
+    assert LEGACY_CONFIG.variability.n_bins == 99
+    assert LEGACY_CONFIG.n_bins == 99
+
+
 def test_query_matches_the_original_query_script(imported, legacy_source):
     """Queries on the imported bank match the original run_mpd_interpolator.py code.
 

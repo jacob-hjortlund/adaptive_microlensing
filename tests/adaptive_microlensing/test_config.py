@@ -12,17 +12,19 @@ from adaptive_microlensing import (
 )
 
 
-def test_defaults_are_the_original_runs_with_100_bins():
-    """The defaults are the settings of run.sh and run_map_gen.sh, but with 100 bins instead of 100 edges."""
+def test_defaults_cut_64_windows_the_size_of_a_bank_map():
+    """The defaults are the original runs with 100 bins, bank-sized windows and a residual goal."""
     config = BankConfig()
     assert config.domain == DomainSpec((0.05, 2.0), (0.05, 2.0), (0.01, 0.99), 100.0)
-    assert config.variability.map == MapSpec(80.0, 0.1)
-    assert config.variability.map.num_pixels == 1600
-    assert config.variability.window_half_length == 10.0
+    assert config.variability.map == MapSpec(160.0, 0.1)
+    assert config.variability.map.num_pixels == 3200
+    assert config.variability.window_half_length == 20.0
     assert config.variability.windows_per_axis == 8
-    assert config.variability.window_pixels == 200
+    assert config.variability.window_pixels == 400
+    assert 2.0 * config.variability.window_half_length == config.bank_map.width
     assert config.variability.quantile == 0.95
     assert config.variability.n_bins == 100
+    assert config.variability.histogram_bin_width == 0.002
     assert config.bank_map == MapSpec(20.0, 0.01)
     assert config.bank_map.num_pixels == 4000
     assert config.n_bins == 100
@@ -30,7 +32,22 @@ def test_defaults_are_the_original_runs_with_100_bins():
     assert config.seed == 42
     assert config.design == DesignSpec(6, 0.05, 2.0, 0.0, None, 0.5)
     assert config.generator == GeneratorSpec("ipm", {"rectangular": True})
-    assert StoppingCriteria() == StoppingCriteria(500, None, None, 100)
+    assert StoppingCriteria() == StoppingCriteria(500, None, 0.1, 100)
+
+
+@pytest.mark.parametrize("width", [0.0, -0.002, float("inf"), float("nan")])
+def test_histogram_bin_width_must_be_positive_and_finite(width):
+    """The window-histogram grid needs a positive, finite bin width."""
+    with pytest.raises(ValueError, match="histogram_bin_width"):
+        VariabilitySpec(histogram_bin_width=width)
+
+
+def test_histogram_bin_width_round_trips_through_json():
+    """bank.json records the window-histogram bin width and gives it back."""
+    config = BankConfig(variability=VariabilitySpec(histogram_bin_width=0.005))
+    data = json.loads(json.dumps(config.to_dict()))
+    assert data["variability"]["histogram_bin_width"] == 0.005
+    assert BankConfig.from_dict(data) == config
 
 
 def test_config_round_trips_through_json():
@@ -147,7 +164,7 @@ def test_bank_config_rejects_bad_values():
 def test_stopping_criteria_validation():
     """StoppingCriteria needs at least one valid criterion."""
     with pytest.raises(ValueError, match="at least one"):
-        StoppingCriteria(max_valid_points=None)
+        StoppingCriteria(max_valid_points=None, residual_goal=None)
     with pytest.raises(ValueError, match="max_valid_points"):
         StoppingCriteria(max_valid_points=0)
     with pytest.raises(ValueError, match="residual_goal"):
