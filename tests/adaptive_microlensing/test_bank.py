@@ -16,12 +16,13 @@ from helpers import CENTROID, NEAR_FIRST_VERTEX, OUTSIDE_TETRAHEDRON, TETRAHEDRO
 def test_create_writes_bank_json_and_empty_regions(bank, config):
     """create() writes bank.json and three empty regions."""
     meta = json.loads((bank.path / "bank.json").read_text())
-    assert meta["schema_version"] == 1
+    assert meta["schema_version"] == 2
     assert meta["config"] == config.to_dict()
     assert set(meta["versions"]) >= {"python", "numpy", "scipy", "pandas", "adaptive", "generator"}
     for region in ("minima", "saddle", "maxima"):
         assert (bank.path / region / "entries.csv").is_file()
         assert (bank.path / region / "maps").is_dir()
+        assert (bank.path / region / "windows").is_dir()
     assert bank.summary()["entries"].tolist() == [0, 0, 0]
     assert bank.config == config
 
@@ -213,3 +214,13 @@ def test_unfinalized_region_is_not_ready(tmp_path, generator):
         for point in TETRAHEDRON:
             add_entry(bank, "minima", point, generator)
         assert bank.query(*CENTROID).status is QueryStatus.REGION_NOT_READY
+
+
+def test_open_refuses_a_bank_of_an_older_layout(bank):
+    """A bank written by the previous layout is refused with a way to recover."""
+    path = bank.path / "bank.json"
+    bank.close()
+    meta = json.loads(path.read_text())
+    path.write_text(json.dumps({**meta, "schema_version": 1}))
+    with pytest.raises(BankCorruptError, match=r"schema version 1.*import_legacy_bank"):
+        MapBank.open(bank.path)

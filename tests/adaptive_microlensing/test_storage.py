@@ -1,4 +1,5 @@
 import errno
+import io
 import math
 import os
 
@@ -8,6 +9,7 @@ import pytest
 from adaptive_microlensing import BankCorruptError, BankLockedError, storage
 from adaptive_microlensing.storage import (
     ENTRY_COLUMNS,
+    WINDOWS_DIR,
     RegionLock,
     RegionStore,
     append_entry,
@@ -30,7 +32,9 @@ def _row(entry_id, **overrides):
         "valid": True,
         "error": "",
         "intrinsic_quantile": 0.123456789012345,
+        "coarse_quantile": 0.123456789012345,
         "map_file": RegionStore.map_file(entry_id),
+        "window_file": "",
         "mag_min": -1.5,
         "mag_max": 2.5,
         "variability_seed": 12345,
@@ -223,3 +227,99 @@ def test_a_lock_whose_descriptor_was_closed_elsewhere_can_be_taken_again(tmp_pat
     other = RegionLock(tmp_path / ".lock")
     other.acquire()
     other.release()
+
+
+def test_entries_have_coarse_quantile_and_window_file_columns():
+    """The provisional quantile sits next to the quantile in force, the window file next to the map."""
+    columns = list(ENTRY_COLUMNS)
+    assert columns.index("coarse_quantile") == columns.index("intrinsic_quantile") + 1
+    assert columns.index("window_file") == columns.index("map_file") + 1
+
+
+def test_window_histograms_round_trip(tmp_path):
+    """Window histograms are written atomically to windows/ and read back unchanged."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    assert (store.directory / WINDOWS_DIR).is_dir()
+    counts = np.arange(48, dtype=np.int32).reshape(16, 3)
+    relative = store.write_windows(7, -1234, counts)
+    assert relative == "windows/windows_000007.npz" == RegionStore.window_file(7)
+    start, restored = store.read_windows(relative)
+    assert start == -1234
+    assert restored.dtype == np.int32
+    np.testing.assert_array_equal(restored, counts)
+    assert sorted(p.name for p in (store.directory / WINDOWS_DIR).iterdir()) == ["windows_000007.npz"]
+
+
+def _npy_bytes(array):
+    """The bytes of ``array`` saved as a plain .npy file."""
+    buffer = io.BytesIO()
+    np.save(buffer, array)
+    return buffer.getvalue()
+
+
+CORRUPT_WINDOW_FILES = {
+    "missing": lambda path: path.unlink(),
+    "garbage": lambda path: path.write_bytes(b"not an npz file"),
+    "truncated": lambda path: path.write_bytes(path.read_bytes()[:40]),
+    "a plain npy": lambda path: path.write_bytes(_npy_bytes(np.zeros(3))),
+    "without counts": lambda path: np.savez(path, start=np.int64(0)),
+    "float counts": lambda path: np.savez(path, start=np.int64(0), counts=np.zeros((2, 2))),
+}
+
+
+@pytest.mark.parametrize("corrupt", CORRUPT_WINDOW_FILES.values(), ids=CORRUPT_WINDOW_FILES.keys())
+def test_unusable_window_files_are_reported_as_corrupt(tmp_path, corrupt):
+    """A window file that is missing or unreadable raises BankCorruptError naming it."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    relative = store.write_windows(0, 0, np.ones((4, 2), dtype=np.int32))
+    corrupt(store.directory / relative)
+    with pytest.raises(BankCorruptError, match="windows_000000"):
+        store.read_windows(relative)
+
+
+def test_a_schema_1_region_is_refused(tmp_path):
+    """A region written by the previous layout is refused with both schema versions named."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    store.write_meta({**read_json(store.meta_path), "schema_version": 1})
+    with pytest.raises(BankCorruptError, match=r"schema version 1.*schema 2"):
+        store.load(4)
+
+
+def test_an_unfinalized_region_loads_its_provisional_quantiles(tmp_path):
+    """A finalize interrupted before region.json may leave frozen-edge quantiles; loading undoes it."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    row = _row(0, intrinsic_quantile=0.05, coarse_quantile=0.08)
+    store.commit(append_entry(empty_entries(), row), np.full((1, 4), np.nan))
+    assert read_entries(store.entries_path).loc[0, "intrinsic_quantile"] == 0.05
+    assert store.load(4).entries.loc[0, "intrinsic_quantile"] == 0.08
+
+
+def test_a_finalized_region_needs_a_quantile_for_every_valid_entry(tmp_path):
+    """A finalized region whose valid entry has no quantile in force is corrupt."""
+    store = _finalized_store(tmp_path)
+    write_entries(store.entries_path, append_entry(empty_entries(), _row(0, intrinsic_quantile=math.nan)))
+    with pytest.raises(BankCorruptError, match="intrinsic quantile"):
+        store.load(4)
+
+
+def test_write_finalized_writes_mpds_then_entries_then_region_json(tmp_path, monkeypatch):
+    """region.json is written last, so it commits a finalize."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    written = []
+    for name in ("atomic_save_array", "write_entries", "atomic_write_json"):
+        original = getattr(storage, name)
+
+        def recording(path, payload, _original=original):
+            written.append(path.name)
+            return _original(path, payload)
+
+        monkeypatch.setattr(storage, name, recording)
+    meta = {**read_json(store.meta_path), "finalized": True, "bin_edges": [0.0, 1.0, 2.0]}
+    store.write_finalized(append_entry(empty_entries(), _row(0)), np.ones((1, 4)), meta)
+    assert written == ["mpds.npy", "entries.csv", "region.json"]
+    assert store.load(4).meta["finalized"] is True

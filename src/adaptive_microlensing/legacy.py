@@ -149,9 +149,10 @@ def _legacy_entries(frame: pd.DataFrame) -> pd.DataFrame:
     -----
     Row ``r`` becomes the entry with ``entry_id = r`` and the row's ``kappa``, ``gamma``
     and ``s``. It is valid when ``validity`` is at least 1. A valid entry takes
-    ``mpd_distance`` as its ``intrinsic_quantile``, ``maps/map_{r:06d}.npy`` as its
-    ``map_file`` and ``LEGACY_MAP_SEED_BASE + r + 1`` as its ``map_seed``, and has an empty
-    ``error``. An invalid entry has a NaN quantile, no map file, no map seed and the
+    ``mpd_distance`` as its ``intrinsic_quantile`` and ``coarse_quantile``,
+    ``maps/map_{r:06d}.npy`` as its ``map_file`` (with no ``window_file``) and
+    ``LEGACY_MAP_SEED_BASE + r + 1`` as its ``map_seed``, and has an empty ``error``.
+    An invalid entry has a NaN quantile, no map file, no map seed and the
     error ``"legacy: invalid (reason not recorded)"``. Every entry has no
     ``variability_seed``, since the original runs did not record it, an empty
     ``generator_version``, ``origin`` ``"legacy"`` and the same ``created_at``, the time of
@@ -171,7 +172,9 @@ def _legacy_entries(frame: pd.DataFrame) -> pd.DataFrame:
             "valid": bool(is_valid),
             "error": "" if is_valid else "legacy: invalid (reason not recorded)",
             "intrinsic_quantile": float(source["mpd_distance"]) if is_valid else math.nan,
+            "coarse_quantile": float(source["mpd_distance"]) if is_valid else math.nan,
             "map_file": RegionStore.map_file(row) if is_valid else "",
+            "window_file": "",
             "mag_min": math.nan,
             "mag_max": math.nan,
             "variability_seed": None,

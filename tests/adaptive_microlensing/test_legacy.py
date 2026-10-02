@@ -294,3 +294,14 @@ def test_reopened_import_is_queryable(imported):
     imported.close()
     with MapBank.open(path) as reader:
         assert reader.summary()["finalized"].all()
+
+
+def test_imported_entries_keep_their_quantile_and_have_no_window_histograms(imported, legacy_source):
+    """Legacy entries have no coarse maps, so their quantile in force stays the original mpd_distance."""
+    entries = imported.entries("saddle")
+    valid = entries["valid"].to_numpy(dtype=bool)
+    original = legacy.read_legacy_region(legacy_source, "saddle")["mpd_distance"].to_numpy(dtype=float)
+    np.testing.assert_array_equal(entries["intrinsic_quantile"].to_numpy()[valid], original[valid])
+    np.testing.assert_array_equal(entries["coarse_quantile"].to_numpy()[valid], original[valid])
+    assert entries.loc[~valid, "coarse_quantile"].isna().all()
+    assert entries["window_file"].eq("").all()

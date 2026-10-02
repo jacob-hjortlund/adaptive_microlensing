@@ -45,7 +45,7 @@ class BankCorruptError(BankError):
 
     Raised while a bank is loaded, by :meth:`~adaptive_microlensing.bank.MapBank.open` and
     the readers in :mod:`adaptive_microlensing.storage`: when ``bank.json`` or
-    ``region.json`` is missing, is not a readable JSON object or has an unknown schema
+    ``region.json`` is missing, is not a readable JSON object or has another schema
     version, when ``bank.json`` holds no valid configuration, when ``region.json`` names
     another region, lacks its ``finalized`` flag or ``bin_edges``, or is finalized without
     edges, when ``entries.csv`` is missing or malformed, when ``mpds.npy`` is missing,

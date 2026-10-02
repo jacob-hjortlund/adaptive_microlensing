@@ -79,6 +79,7 @@ from .storage import (
     atomic_write_json,
     normalise_entries,
     read_json,
+    schema_error,
     utc_now,
 )
 
@@ -452,7 +453,7 @@ class MapBank:
         root = Path(path)
         meta = read_json(root / BANK_FILE)
         if meta.get("schema_version") != SCHEMA_VERSION:
-            raise BankCorruptError(f"{root / BANK_FILE} has an unknown schema version.")
+            raise BankCorruptError(schema_error(root / BANK_FILE, meta.get("schema_version")))
         try:
             config = BankConfig.from_dict(meta["config"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -1200,7 +1201,9 @@ class MapBank:
             "valid": False,
             "error": "",
             "intrinsic_quantile": math.nan,
+            "coarse_quantile": math.nan,
             "map_file": "",
+            "window_file": "",
             "mag_min": math.nan,
             "mag_max": math.nan,
             "variability_seed": variability_seed,
@@ -1232,7 +1235,13 @@ class MapBank:
             row["error"] = f"{type(exc).__name__}: {exc}"
             logger.info("%s entry %d at %s is invalid: %s", region, entry_id, point, row["error"])
         else:
-            row.update(valid=True, intrinsic_quantile=quantile, mag_min=mag_min, mag_max=mag_max)
+            row.update(
+                valid=True,
+                intrinsic_quantile=quantile,
+                coarse_quantile=quantile,
+                mag_min=mag_min,
+                mag_max=mag_max,
+            )
         return PendingEntry(row=row, mpd=mpd)
 
     def _commit(
