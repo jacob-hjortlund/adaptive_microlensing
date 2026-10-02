@@ -407,8 +407,9 @@ def build_region(
     ``LearnerND``, in entry order, so the build continues from the entries of earlier
     builds, fetches and imports. It then repeats three steps until a criterion of
     ``stop`` holds: ask the learner for one point; evaluate it with the bank, which makes
-    its coarse and bank maps, measures its intrinsic quantile, writes its bank map and,
-    in a finalized region, computes its bank MPD; and tell the learner the result and
+    its coarse and bank maps, measures its provisional quantile on the coarse map's own
+    edges, writes its bank map and window histograms and, in a finalized region, computes
+    its bank MPD and its quantile on the frozen edges; and tell the learner the result and
     commit it as a new entry with ``origin="build"``. A failure to make a usable map
     (:exc:`MapGenerationError` or :exc:`InvalidMapError`) does not stop the build: the
     point becomes an invalid entry.

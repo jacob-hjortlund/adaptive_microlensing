@@ -770,7 +770,12 @@ class StoppingCriteria:
         residual. Residuals recorded by earlier builds of the region count too. Positive and
         finite when set; ``None`` disables the criterion. Default is ``0.1``, just above the
         scatter of the intrinsic quantile between coarse maps of one point (about 8% in the
-        coarse-window test), below which the residuals cannot fall.
+        coarse-window test), below which the residuals cannot fall. A region whose goal is
+        already met adds nothing when built again with only ``max_valid_points`` raised: use
+        ``residual_goal=None`` (or a smaller goal) to extend it. The residuals of a region
+        built both before and after :meth:`~adaptive_microlensing.bank.MapBank.finalize` mix
+        values measured on the provisional quantiles and on the frozen-edge quantiles in the
+        stopping window.
     min_num_residuals : int, optional
         Number of most recent residuals that ``residual_goal`` looks at, and the number that
         must exist before it can stop the build. It also sets the window of the

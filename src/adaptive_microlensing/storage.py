@@ -27,13 +27,17 @@ named after it (``minima``, ``saddle`` and ``maxima``). This is layout version
 
 Every file is replaced atomically: the new contents go to a temporary file in the same
 directory, which is flushed, fsynced and then renamed over the target
-(:func:`atomic_write_bytes`, :func:`atomic_write_json`, :func:`atomic_save_array`).
-A crash before step 3 of a commit leaves an unused map file or an extra row in
-``mpds.npy``. Both are harmless: :meth:`RegionStore.load` drops the extra rows, and the
-next entry takes the same ID and overwrites both. Finalizing writes ``mpds.npy``, then
-``entries.csv``, then ``region.json`` (:meth:`RegionStore.write_finalized`). Readers read the
-files in the opposite order to the writers
-(:meth:`RegionStore.load`), so they always get a consistent snapshot.
+(:func:`atomic_write_bytes`, :func:`atomic_write_json`, :func:`atomic_save_array`,
+:func:`atomic_save_windows`).
+A crash before step 3 of a commit leaves an unused map file, an unused window file or an
+extra row in ``mpds.npy``. All are harmless: :meth:`RegionStore.load` drops the extra rows,
+and the next entry takes the same ID and overwrites them. Finalizing writes ``mpds.npy``, then
+``entries.csv``, then ``region.json`` (:meth:`RegionStore.write_finalized`). Readers read
+``region.json``, then ``entries.csv``, then ``mpds.npy``, the opposite order to the writers
+(:meth:`RegionStore.load`), so they always get a consistent snapshot. If the region is not
+finalized, :meth:`RegionStore.load` also replaces ``intrinsic_quantile`` by ``coarse_quantile``,
+which keeps a finalize interrupted before ``region.json`` invisible: the frozen-edge
+quantiles it may have written to ``entries.csv`` are ignored.
 
 The entries table has the columns of :data:`ENTRY_COLUMNS`, with the dtypes that
 :func:`normalise_entries` sets:
@@ -317,8 +321,15 @@ def schema_error(path: Path, found: Any) -> str:
     Returns
     -------
     str
-        A message that names both versions and says how to recover.
+        A message that names both versions and says how to recover: upgrade the package if
+        the file is of a newer version, rebuild the bank otherwise.
     """
+    if isinstance(found, int) and not isinstance(found, bool) and found > SCHEMA_VERSION:
+        return (
+            f"{path} has schema version {found!r}, but this version of adaptive_microlensing reads "
+            f"schema {SCHEMA_VERSION} only. The bank was written by a newer version: upgrade "
+            "adaptive_microlensing to open it."
+        )
     return (
         f"{path} has schema version {found!r}, but this version of adaptive_microlensing reads "
         f"schema {SCHEMA_VERSION} only. Rebuild the bank, or import legacy output again with "
@@ -661,7 +672,8 @@ class RegionStore:
         Raises
         ------
         FileExistsError
-            If the region's ``maps`` directory already exists. Nothing is written then.
+            If the region's ``maps`` directory or its ``windows`` directory already exists
+            (the ``maps`` directory is created first, so nothing is written when it exists).
         """
         (self.directory / MAPS_DIR).mkdir(parents=True, exist_ok=False)
         (self.directory / WINDOWS_DIR).mkdir(exist_ok=False)
@@ -817,8 +829,9 @@ class RegionStore:
         ------
         BankCorruptError
             If the file is missing, is not a readable ``.npz`` archive, lacks ``start`` or
-            ``counts``, or holds anything but an integer scalar ``start`` and a
-            two-dimensional integer ``counts``.
+            ``counts``, holds anything but an integer scalar ``start`` and a
+            two-dimensional integer ``counts``, or if any count is negative or any row
+            (window) has a total of zero.
         """
         path = self.directory / relative_path
         try:
@@ -844,6 +857,10 @@ class RegionStore:
             raise BankCorruptError(
                 f"{path} does not hold an integer start and two-dimensional integer counts."
             )
+        if counts.size and counts.min() < 0:
+            raise BankCorruptError(f"{path} holds negative window histogram counts.")
+        if counts.shape[0] == 0 or counts.shape[1] == 0 or not np.all(counts.sum(axis=1) > 0):
+            raise BankCorruptError(f"{path} holds a window histogram with no counts.")
         return int(start), counts
 
     def commit(self, entries: pd.DataFrame, mpds: np.ndarray) -> None:
@@ -862,20 +879,6 @@ class RegionStore:
         """
         atomic_save_array(self.mpds_path, mpds)
         write_entries(self.entries_path, entries)
-
-    def write_mpds(self, mpds: np.ndarray) -> None:
-        """Replace ``mpds.npy``.
-
-        The array is written atomically, and ``entries.csv`` is not touched. Finalizing
-        writes every entry's MPD with it before it marks the region finalized in
-        ``region.json``, so a reader never sees a finalized region without its MPDs.
-
-        Parameters
-        ----------
-        mpds : numpy.ndarray
-            MPD array of shape ``(n_entries, n_mpd_columns)``.
-        """
-        atomic_save_array(self.mpds_path, mpds)
 
     def write_finalized(self, entries: pd.DataFrame, mpds: np.ndarray, meta: dict[str, Any]) -> None:
         """Write a finalized region: ``mpds.npy``, then ``entries.csv``, then ``region.json``.

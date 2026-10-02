@@ -51,7 +51,11 @@ class BankCorruptError(BankError):
     edges, when ``entries.csv`` is missing or malformed, when ``mpds.npy`` is missing,
     unreadable, has the wrong number of columns or has fewer rows than ``entries.csv``, when
     the entry IDs are not 0, 1, 2, ..., or when a finalized region lacks the MPD of a valid
-    entry. It is also raised when an entries table lacks one of the standard columns.
+    entry. It is also raised when an entries table lacks one of the standard columns, when
+    the window histograms of a valid entry are missing or unusable (not a readable
+    ``.npz`` archive of non-negative integer counts, a window with no counts, or the wrong
+    number of windows), which :meth:`~adaptive_microlensing.bank.MapBank.finalize` meets,
+    and when a finalized region has a valid entry with no finite ``intrinsic_quantile``.
     """
 
 

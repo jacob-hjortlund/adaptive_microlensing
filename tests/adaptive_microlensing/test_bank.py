@@ -318,3 +318,22 @@ def test_finalize_refuses_a_missing_window_file_and_writes_nothing(bank, generat
     assert not bank._regions["minima"].finalized
     assert json.loads((bank.path / "minima" / "region.json").read_text())["finalized"] is False
     assert (bank.path / "minima" / "entries.csv").read_bytes() == entries_before
+
+
+def test_finalize_refuses_a_window_file_with_the_wrong_number_of_rows_and_writes_nothing(bank, generator):
+    """A loadable window file with too few rows raises BankCorruptError before any write."""
+    for point in TETRAHEDRON:
+        add_entry(bank, "minima", point, generator)
+    np.savez(
+        bank.path / "minima" / "windows" / "windows_000002.npz",
+        start=np.int64(0),
+        counts=np.ones((1, 5), dtype=np.int32),
+    )
+    directory = bank.path / "minima"
+    before = {name: (directory / name).read_bytes() for name in ("entries.csv", "mpds.npy", "region.json")}
+    with pytest.raises(BankCorruptError, match="windows_000002"):
+        bank.finalize("minima")
+    assert not bank._regions["minima"].finalized
+    assert json.loads((directory / "region.json").read_text())["finalized"] is False
+    for name, content in before.items():
+        assert (directory / name).read_bytes() == content

@@ -552,9 +552,10 @@ class MapBank:
 
         The table has one row per entry, valid and invalid, in ``entry_id`` order, with the
         columns of ``entries.csv``: the parameters, validity and error, intrinsic quantile,
-        map file and magnitude range, seeds, provenance and build diagnostics. It shows the
-        region as it was when the bank was opened, plus the entries this bank has
-        committed since.
+        coarse quantile (the provisional quantile measured on the coarse map's own bin
+        edges), map file, window file and magnitude range, seeds, provenance and build
+        diagnostics. It shows the region as it was when the bank was opened, plus the entries
+        this bank has committed since.
 
         Parameters
         ----------
@@ -616,7 +617,8 @@ class MapBank:
         can simply be run again. Each new entry is committed as soon as its maps are made,
         including an entry whose maps failed, which stays in the mesh as an invalid entry.
         If the stopping rule already holds, no entry is added. The region may already be
-        finalized, in which case new entries get their MPDs on the frozen bin edges.
+        finalized, in which case new entries get their MPDs and quantiles on the frozen bin
+        edges.
 
         Parameters
         ----------
@@ -624,7 +626,11 @@ class MapBank:
             Name of the region to build, one of ``REGIONS``.
         stop : StoppingCriteria or None, optional
             When to stop adding entries. When ``None``, ``StoppingCriteria()`` is used,
-            which stops once the region has 500 valid entries.
+            which stops once the region has 500 valid entries or once the last 100 relative
+            residuals are all at most 0.1, whichever comes first. A region whose residual
+            goal is already met gains nothing from a re-run that only raises
+            ``max_valid_points``: to extend it, pass ``residual_goal=None`` (or a smaller
+            goal).
         generator : MapGenerator or None, optional
             Generator that makes the maps. When ``None``, the generator named in the
             bank's configuration is used. It must match that configuration.
@@ -1398,8 +1404,8 @@ class MapBank:
         InvalidMapError
             If a valid entry's bank map has no finite pixels.
         BankCorruptError
-            If a valid entry's window histograms are missing or unreadable. Nothing is
-            written then.
+            If a valid entry's window histograms are missing or unreadable, or hold the wrong
+            number of windows. Nothing is written then.
         """
         state = self._region(region)
         self._require_writable(region)
@@ -1413,6 +1419,11 @@ class MapBank:
             window_file = str(state.entries["window_file"].iloc[row])
             if window_file:
                 start, counts = state.store.read_windows(window_file)
+                if counts.shape[0] != spec.windows_per_axis**2:
+                    raise BankCorruptError(
+                        f"{state.store.directory / window_file} holds {counts.shape[0]} windows, "
+                        f"but the configuration needs {spec.windows_per_axis**2}."
+                    )
                 window_edges_mpds = window_mpds(start, counts, edges, spec.histogram_bin_width)
                 quantiles[row] = window_quantile(window_edges_mpds, spec.quantile)
             if position == len(rows) or position % max(1, len(rows) // 10) == 0:

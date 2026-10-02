@@ -280,6 +280,12 @@ CORRUPT_WINDOW_FILES = {
     "without counts": lambda path: np.savez(path, start=np.int64(0)),
     "corrupt deflate stream": _corrupt_deflate_stream,
     "float counts": lambda path: np.savez(path, start=np.int64(0), counts=np.zeros((2, 2))),
+    "negative counts": lambda path: np.savez(
+        path, start=np.int64(0), counts=np.array([[1, -1], [2, 2]], dtype=np.int32)
+    ),
+    "an all-zero row": lambda path: np.savez(
+        path, start=np.int64(0), counts=np.array([[1, 1], [0, 0]], dtype=np.int32)
+    ),
 }
 
 
@@ -301,6 +307,17 @@ def test_a_schema_1_region_is_refused(tmp_path):
     store.write_meta({**read_json(store.meta_path), "schema_version": 1})
     with pytest.raises(BankCorruptError, match=r"schema version 1.*schema 2"):
         store.load(4)
+
+
+def test_a_schema_from_a_newer_package_advises_an_upgrade(tmp_path):
+    """A region of a newer layout is not to be rebuilt: the message says to upgrade the package."""
+    store = RegionStore(tmp_path / "minima", "minima")
+    store.initialise(n_mpd_columns=4)
+    store.write_meta({**read_json(store.meta_path), "schema_version": 3})
+    with pytest.raises(BankCorruptError, match=r"schema version 3") as caught:
+        store.load(4)
+    assert "pgrade" in str(caught.value)
+    assert "Rebuild" not in str(caught.value)
 
 
 def test_an_unfinalized_region_loads_its_provisional_quantiles(tmp_path):
